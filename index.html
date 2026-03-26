@@ -1,410 +1,555 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Laabh Fintech Services – Document Portal</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="text/babel">
-    const { useState, useEffect } = React;
-    const FIRM = "Laabh Fintech Services";
-    const ADMIN = { username: "admin", password: "admin123" };
-    const DEFAULT_CHECKLIST = [
-      "PAN Card","Aadhaar Card","Passport / Voter ID",
-      "Bank Statement (Last 6 months)","ITR (Last 2 years)",
-      "Salary Slips (Last 3 months)","Form 16",
-      "GST Registration Certificate","Balance Sheet & P&L",
-      "Partnership Deed / MOA / AOA"
-    ];
-    const STATUS = ["Pending","Received","Approved"];
-    const SC = { Pending:"bg-amber-50 text-amber-700", Received:"bg-blue-50 text-blue-700", Approved:"bg-green-50 text-green-700" };
+import { useState, useEffect } from "react";
 
-    const ls = {
-      get: k => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
-      set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
-    };
+const ADMIN_USER = { username: "admin", password: "admin123", isAdmin: true };
+const FIRM = "Laabh Fintech Services";
 
-    function fileToBase64(file) {
-      return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+const DEFAULT_CHECKLIST = [
+  "PAN Card", "Aadhaar Card", "Passport / Voter ID",
+  "Bank Statement (Last 6 months)", "ITR (Last 2 years)",
+  "Salary Slips (Last 3 months)", "Form 16", "GST Registration Certificate",
+  "Balance Sheet & P&L", "Partnership Deed / MOA / AOA"
+];
+
+const statusColors = {
+  Pending: "bg-amber-50 text-amber-700",
+  Received: "bg-blue-50 text-blue-700",
+  Approved: "bg-green-50 text-green-700",
+};
+const statusOrder = ["Pending", "Received", "Approved"];
+
+// ── LocalStorage helpers (replaces window.storage for standalone app) ──
+const store = {
+  get: (key) => { try { const v = localStorage.getItem(key); return v ? { value: v } : null; } catch { return null; } },
+  set: (key, val) => { try { localStorage.setItem(key, val); } catch {} },
+};
+
+function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+function downloadBase64(dataUrl, filename) {
+  const a = document.createElement("a"); a.href = dataUrl; a.download = filename; a.click();
+}
+function formatSize(b) {
+  if (b < 1024) return b + " B";
+  if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+  return (b / 1048576).toFixed(1) + " MB";
+}
+function getFileIcon(type) {
+  if (type.includes("pdf")) return "📄";
+  if (type.includes("image")) return "🖼️";
+  if (type.includes("word") || type.includes("document")) return "📝";
+  if (type.includes("sheet") || type.includes("excel")) return "📊";
+  return "📎";
+}
+
+export default function App() {
+  const [screen, setScreen] = useState("login");
+  const [currentUser, setCurrentUser] = useState(null);
+  const [clients, setClients] = useState([]);
+  const [docs, setDocs] = useState([]);
+  const [checklist, setChecklist] = useState(DEFAULT_CHECKLIST);
+  const [clientChecklists, setClientChecklists] = useState({});
+  const [reminders, setReminders] = useState({});
+  const [loginForm, setLoginForm] = useState({ identity: "", password: "" });
+  const [loginError, setLoginError] = useState("");
+  const [activeClient, setActiveClient] = useState(null);
+  const [adminTab, setAdminTab] = useState("docs");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [regForm, setRegForm] = useState({ name: "", email: "", password: "" });
+  const [showReg, setShowReg] = useState(false);
+  const [regError, setRegError] = useState("");
+  const [toast, setToast] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [newDocItem, setNewDocItem] = useState("");
+  const [reminderMsg, setReminderMsg] = useState("");
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [reminderTarget, setReminderTarget] = useState(null);
+
+  useEffect(() => {
+    try { const c = store.get("clients"); if (c) setClients(JSON.parse(c.value)); } catch {}
+    try { const d = store.get("docs"); if (d) setDocs(JSON.parse(d.value)); } catch {}
+    try { const ch = store.get("checklist"); if (ch) setChecklist(JSON.parse(ch.value)); } catch {}
+    try { const cc = store.get("clientChecklists"); if (cc) setClientChecklists(JSON.parse(cc.value)); } catch {}
+    try { const rm = store.get("reminders"); if (rm) setReminders(JSON.parse(rm.value)); } catch {}
+  }, []);
+
+  function saveClients(d) { setClients(d); store.set("clients", JSON.stringify(d)); }
+  function saveDocs(d) { setDocs(d); store.set("docs", JSON.stringify(d)); }
+  function saveChecklist(d) { setChecklist(d); store.set("checklist", JSON.stringify(d)); }
+  function saveClientChecklists(d) { setClientChecklists(d); store.set("clientChecklists", JSON.stringify(d)); }
+  function saveReminders(d) { setReminders(d); store.set("reminders", JSON.stringify(d)); }
+
+  function notify(msg) { setToast(msg); setTimeout(() => setToast(""), 3000); }
+
+  function handleLogin() {
+    if (loginForm.identity === "admin" && loginForm.password === ADMIN_USER.password) {
+      setCurrentUser(ADMIN_USER); setScreen("admin"); setLoginError(""); return;
     }
-    function dlB64(url, name) { const a = document.createElement("a"); a.href = url; a.download = name; a.click(); }
-    function fmtSize(b) { if(b<1024) return b+" B"; if(b<1048576) return (b/1024).toFixed(1)+" KB"; return (b/1048576).toFixed(1)+" MB"; }
-    function fIcon(t) { if(t.includes("pdf")) return "📄"; if(t.includes("image")) return "🖼️"; if(t.includes("word")||t.includes("document")) return "📝"; if(t.includes("sheet")||t.includes("excel")) return "📊"; return "📎"; }
+    const client = clients.find(c =>
+      (c.name.toLowerCase() === loginForm.identity.trim().toLowerCase() ||
+        c.email.toLowerCase() === loginForm.identity.trim().toLowerCase()) &&
+      c.password === loginForm.password
+    );
+    if (client) { setCurrentUser(client); setScreen("client"); setLoginError(""); }
+    else setLoginError("Invalid name/email or password.");
+  }
 
-    function Toast({msg}) {
-      if(!msg) return null;
-      return <div className="fixed top-5 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm px-5 py-2 rounded-full shadow z-50">{msg}</div>;
+  function handleRegister() {
+    if (!regForm.name.trim() || !regForm.email.trim() || !regForm.password.trim()) { setRegError("Please fill all fields."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(regForm.email)) { setRegError("Enter a valid email."); return; }
+    if (clients.find(c => c.email.toLowerCase() === regForm.email.trim().toLowerCase())) { setRegError("Email already registered."); return; }
+    const nc = { id: Date.now().toString(), name: regForm.name.trim(), email: regForm.email.trim().toLowerCase(), password: regForm.password };
+    const updatedClients = [...clients, nc];
+    saveClients(updatedClients);
+    const updatedCC = { ...clientChecklists, [nc.id]: checklist.map(item => ({ item, status: "Pending" })) };
+    saveClientChecklists(updatedCC);
+    setShowReg(false); setRegForm({ name: "", email: "", password: "" }); setRegError("");
+    notify("Account created. You can now sign in.");
+  }
+
+  function handleLogout() { setCurrentUser(null); setScreen("login"); setLoginForm({ identity: "", password: "" }); setActiveClient(null); setAdminTab("docs"); }
+
+  async function handleUpload(e) {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    setUploading(true);
+    const newDocs = [];
+    for (const file of files) {
+      const data = await fileToBase64(file);
+      newDocs.push({ id: Date.now().toString() + Math.random(), clientId: currentUser.id, clientName: currentUser.name, name: file.name, type: file.type, size: file.size, data, status: "Pending", uploadedAt: new Date().toLocaleDateString("en-IN") });
     }
+    saveDocs([...docs, ...newDocs]);
+    setUploading(false); notify(`${newDocs.length} file(s) uploaded.`); e.target.value = "";
+  }
 
-    function DocsTable({docs, showClient, onStatus, onDelete}) {
-      if(!docs.length) return <div className="bg-white rounded-xl border border-gray-100 p-12 text-center text-gray-300 text-sm">No documents found.</div>;
-      return (
-        <div className="bg-white rounded-xl border border-gray-100 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-gray-50">
-              <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium uppercase">File</th>
-              {showClient && <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium uppercase">Client</th>}
-              <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium uppercase">Size</th>
-              <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium uppercase">Date</th>
-              <th className="text-left px-4 py-3 text-xs text-gray-400 font-medium uppercase">Status</th>
-              <th className="px-4 py-3"></th>
-            </tr></thead>
-            <tbody className="divide-y divide-gray-50">
-              {docs.map(d => (
-                <tr key={d.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3"><div className="flex items-center gap-2"><span>{fIcon(d.type)}</span><span className="text-gray-700 truncate max-w-xs">{d.name}</span></div></td>
-                  {showClient && <td className="px-4 py-3 text-gray-500">{d.clientName}</td>}
-                  <td className="px-4 py-3 text-gray-400">{fmtSize(d.size)}</td>
-                  <td className="px-4 py-3 text-gray-400">{d.uploadedAt}</td>
-                  <td className="px-4 py-3">
-                    <select value={d.status} onChange={e=>onStatus(d.id,e.target.value)} className={`text-xs px-2 py-1 rounded-full font-medium border-0 cursor-pointer ${SC[d.status]}`}>
-                      {STATUS.map(s=><option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-3 justify-end">
-                      <button onClick={()=>dlB64(d.data,d.name)} className="text-xs text-gray-400 hover:text-gray-700">Download</button>
-                      <button onClick={()=>onDelete(d.id)} className="text-xs text-gray-300 hover:text-red-400">Delete</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+  function updateDocStatus(docId, status) { saveDocs(docs.map(d => d.id === docId ? { ...d, status } : d)); }
+  function deleteDoc(docId) { saveDocs(docs.filter(d => d.id !== docId)); notify("Document removed."); }
+  function exportClientDocs(clientId) { docs.filter(d => d.clientId === clientId).forEach(d => downloadBase64(d.data, d.name)); }
+
+  function addChecklistItem() {
+    if (!newDocItem.trim()) return;
+    const updated = [...checklist, newDocItem.trim()];
+    saveChecklist(updated);
+    const updatedCC = { ...clientChecklists };
+    Object.keys(updatedCC).forEach(cid => { updatedCC[cid] = [...(updatedCC[cid] || []), { item: newDocItem.trim(), status: "Pending" }]; });
+    saveClientChecklists(updatedCC);
+    setNewDocItem(""); notify("Document added to checklist.");
+  }
+
+  function removeChecklistItem(idx) {
+    const item = checklist[idx];
+    const updated = checklist.filter((_, i) => i !== idx);
+    saveChecklist(updated);
+    const updatedCC = { ...clientChecklists };
+    Object.keys(updatedCC).forEach(cid => { updatedCC[cid] = (updatedCC[cid] || []).filter(r => r.item !== item); });
+    saveClientChecklists(updatedCC);
+  }
+
+  function updateClientChecklistStatus(clientId, itemIdx, status) {
+    const cc = { ...clientChecklists };
+    if (!cc[clientId]) return;
+    cc[clientId] = cc[clientId].map((r, i) => i === itemIdx ? { ...r, status } : r);
+    saveClientChecklists(cc);
+  }
+
+  function getClientChecklist(clientId) {
+    return clientChecklists[clientId] || checklist.map(item => ({ item, status: "Pending" }));
+  }
+
+  function openReminderModal(client) {
+    const cl = getClientChecklist(client.id);
+    const pending = cl.filter(r => r.status === "Pending").map(r => r.item);
+    const msg = pending.length > 0
+      ? `Dear ${client.name},\n\nThis is a reminder from ${FIRM} regarding the following pending documents required from your end:\n\n${pending.map((p, i) => `${i + 1}. ${p}`).join("\n")}\n\nKindly submit the above at your earliest convenience.\n\nRegards,\n${FIRM}`
+      : `Dear ${client.name},\n\nAll documents have been received. Thank you for your prompt submission.\n\nRegards,\n${FIRM}`;
+    setReminderMsg(msg); setReminderTarget(client); setShowReminderModal(true);
+  }
+
+  function sendReminder() {
+    const log = { id: Date.now().toString(), clientId: reminderTarget.id, clientName: reminderTarget.name, email: reminderTarget.email, message: reminderMsg, sentAt: new Date().toLocaleString("en-IN") };
+    const updated = { ...reminders, [reminderTarget.id]: [...(reminders[reminderTarget.id] || []), log] };
+    saveReminders(updated);
+    navigator.clipboard.writeText(reminderMsg).catch(() => {});
+    setShowReminderModal(false);
+    notify(`Reminder logged & copied for ${reminderTarget.name}.`);
+  }
+
+  // ── LOGIN ──
+  if (screen === "login") return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
+      {toast && <div className="fixed top-5 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm px-5 py-2 rounded-full shadow z-50">{toast}</div>}
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <p className="text-xs tracking-widest text-gray-400 uppercase mb-1">Document Portal</p>
+          <h1 className="text-2xl font-semibold text-gray-800">{FIRM}</h1>
         </div>
-      );
-    }
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+          {!showReg ? (
+            <>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Name or Email</label>
+                  <input className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
+                    placeholder="Your name or email" value={loginForm.identity}
+                    onChange={e => setLoginForm({ ...loginForm, identity: e.target.value })}
+                    onKeyDown={e => e.key === "Enter" && handleLogin()} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Password</label>
+                  <input type="password" className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
+                    placeholder="Password" value={loginForm.password}
+                    onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
+                    onKeyDown={e => e.key === "Enter" && handleLogin()} />
+                </div>
+                {loginError && <p className="text-red-500 text-xs">{loginError}</p>}
+                <button onClick={handleLogin} className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition">Sign In</button>
+              </div>
+              <p className="text-center text-xs text-gray-400 mt-5">
+                New client? <button className="text-gray-700 font-medium hover:underline" onClick={() => setShowReg(true)}>Create account</button>
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-sm font-semibold text-gray-700 mb-5 uppercase tracking-wide">New Client Account</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Full Name</label>
+                  <input className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
+                    placeholder="Full name" value={regForm.name} onChange={e => setRegForm({ ...regForm, name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Email</label>
+                  <input type="email" className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
+                    placeholder="Email address" value={regForm.email} onChange={e => setRegForm({ ...regForm, email: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Password</label>
+                  <input type="password" className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
+                    placeholder="Choose a password" value={regForm.password} onChange={e => setRegForm({ ...regForm, password: e.target.value })} />
+                </div>
+                {regError && <p className="text-red-500 text-xs">{regError}</p>}
+                <button onClick={handleRegister} className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition">Register</button>
+                <button onClick={() => { setShowReg(false); setRegError(""); }} className="w-full text-gray-500 py-2 text-sm hover:text-gray-700 transition">← Back</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
-    function App() {
-      const [screen, setScreen] = useState("login");
-      const [user, setUser] = useState(null);
-      const [clients, setClients] = useState(() => ls.get("lfs_clients") || []);
-      const [docs, setDocs] = useState(() => ls.get("lfs_docs") || []);
-      const [checklist, setChecklist] = useState(() => ls.get("lfs_checklist") || DEFAULT_CHECKLIST);
-      const [cCL, setCCL] = useState(() => ls.get("lfs_ccl") || {});
-      const [reminders, setReminders] = useState(() => ls.get("lfs_reminders") || {});
-      const [loginForm, setLoginForm] = useState({ identity:"", password:"" });
-      const [loginErr, setLoginErr] = useState("");
-      const [regForm, setRegForm] = useState({ name:"", email:"", password:"" });
-      const [showReg, setShowReg] = useState(false);
-      const [regErr, setRegErr] = useState("");
-      const [toast, setToast] = useState("");
-      const [uploading, setUploading] = useState(false);
-      const [activeClient, setActiveClient] = useState(null);
-      const [adminTab, setAdminTab] = useState("docs");
-      const [statusFilter, setStatusFilter] = useState("all");
-      const [newItem, setNewItem] = useState("");
-      const [reminderModal, setReminderModal] = useState(false);
-      const [reminderTarget, setReminderTarget] = useState(null);
-      const [reminderMsg, setReminderMsg] = useState("");
-
-      function notify(m) { setToast(m); setTimeout(()=>setToast(""),3000); }
-
-      function saveClients(d) { setClients(d); ls.set("lfs_clients",d); }
-      function saveDocs(d) { setDocs(d); ls.set("lfs_docs",d); }
-      function saveChecklist(d) { setChecklist(d); ls.set("lfs_checklist",d); }
-      function saveCCL(d) { setCCL(d); ls.set("lfs_ccl",d); }
-      function saveReminders(d) { setReminders(d); ls.set("lfs_reminders",d); }
-
-      function getCL(cid) { return cCL[cid] || checklist.map(item=>({item,status:"Pending"})); }
-
-      function login() {
-        if(loginForm.identity==="admin" && loginForm.password===ADMIN.password) { setUser({isAdmin:true,name:"Admin"}); setScreen("admin"); setLoginErr(""); return; }
-        const c = clients.find(c=>(c.name.toLowerCase()===loginForm.identity.trim().toLowerCase()||c.email.toLowerCase()===loginForm.identity.trim().toLowerCase())&&c.password===loginForm.password);
-        if(c) { setUser(c); setScreen("client"); setLoginErr(""); }
-        else setLoginErr("Invalid name/email or password.");
-      }
-
-      function register() {
-        if(!regForm.name.trim()||!regForm.email.trim()||!regForm.password.trim()) { setRegErr("Please fill all fields."); return; }
-        if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(regForm.email)) { setRegErr("Enter a valid email."); return; }
-        if(clients.find(c=>c.email.toLowerCase()===regForm.email.trim().toLowerCase())) { setRegErr("Email already registered."); return; }
-        const nc = { id: Date.now().toString(), name:regForm.name.trim(), email:regForm.email.trim().toLowerCase(), password:regForm.password };
-        const newClients = [...clients, nc];
-        saveClients(newClients);
-        const newCCL = {...cCL, [nc.id]: checklist.map(item=>({item,status:"Pending"}))};
-        saveCCL(newCCL);
-        setShowReg(false); setRegForm({name:"",email:"",password:""}); setRegErr("");
-        notify("Account created. You can now sign in.");
-      }
-
-      function logout() { setUser(null); setScreen("login"); setLoginForm({identity:"",password:""}); setActiveClient(null); setAdminTab("docs"); }
-
-      async function upload(e) {
-        const files = Array.from(e.target.files); if(!files.length) return;
-        setUploading(true);
-        const newDocs = [];
-        for(const f of files) {
-          const data = await fileToBase64(f);
-          newDocs.push({id:Date.now().toString()+Math.random(),clientId:user.id,clientName:user.name,name:f.name,type:f.type,size:f.size,data,status:"Pending",uploadedAt:new Date().toLocaleDateString("en-IN")});
-        }
-        saveDocs([...docs,...newDocs]); setUploading(false); notify(`${newDocs.length} file(s) uploaded.`); e.target.value="";
-      }
-
-      function updateDocStatus(id, status) { saveDocs(docs.map(d=>d.id===id?{...d,status}:d)); }
-      function deleteDoc(id) { saveDocs(docs.filter(d=>d.id!==id)); notify("Document removed."); }
-      function exportAll(cid) { docs.filter(d=>d.clientId===cid).forEach(d=>dlB64(d.data,d.name)); }
-
-      function addCLItem() {
-        if(!newItem.trim()) return;
-        const updated = [...checklist, newItem.trim()];
-        saveChecklist(updated);
-        const updatedCCL = {...cCL};
-        Object.keys(updatedCCL).forEach(cid=>{ updatedCCL[cid]=[...(updatedCCL[cid]||[]),{item:newItem.trim(),status:"Pending"}]; });
-        saveCCL(updatedCCL); setNewItem(""); notify("Item added.");
-      }
-
-      function removeCLItem(idx) {
-        const item = checklist[idx];
-        saveChecklist(checklist.filter((_,i)=>i!==idx));
-        const updatedCCL = {...cCL};
-        Object.keys(updatedCCL).forEach(cid=>{ updatedCCL[cid]=(updatedCCL[cid]||[]).filter(r=>r.item!==item); });
-        saveCCL(updatedCCL);
-      }
-
-      function updateCLStatus(cid, idx, status) {
-        const updated = {...cCL};
-        if(!updated[cid]) return;
-        updated[cid] = updated[cid].map((r,i)=>i===idx?{...r,status}:r);
-        saveCCL(updated);
-      }
-
-      function openReminder(client) {
-        const cl = getCL(client.id);
-        const pending = cl.filter(r=>r.status==="Pending").map(r=>r.item);
-        const msg = pending.length>0
-          ? `Dear ${client.name},\n\nThis is a reminder from ${FIRM} regarding the following pending documents:\n\n${pending.map((p,i)=>`${i+1}. ${p}`).join("\n")}\n\nKindly submit at your earliest convenience.\n\nRegards,\n${FIRM}`
-          : `Dear ${client.name},\n\nAll documents have been received. Thank you.\n\nRegards,\n${FIRM}`;
-        setReminderMsg(msg); setReminderTarget(client); setReminderModal(true);
-      }
-
-      function sendReminder() {
-        const log = {id:Date.now().toString(),clientId:reminderTarget.id,clientName:reminderTarget.name,email:reminderTarget.email,message:reminderMsg,sentAt:new Date().toLocaleString("en-IN")};
-        const updated = {...reminders,[reminderTarget.id]:[...(reminders[reminderTarget.id]||[]),log]};
-        saveReminders(updated);
-        navigator.clipboard.writeText(reminderMsg).catch(()=>{});
-        setReminderModal(false); notify(`Reminder logged for ${reminderTarget.name}.`);
-      }
-
-      // LOGIN
-      if(screen==="login") return (
-        <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-          <Toast msg={toast}/>
-          <div className="w-full max-w-sm">
-            <div className="text-center mb-8">
-              <p className="text-xs tracking-widest text-gray-400 uppercase mb-1">Document Portal</p>
-              <h1 className="text-2xl font-semibold text-gray-800">{FIRM}</h1>
+  // ── CLIENT ──
+  if (screen === "client") {
+    const myDocs = docs.filter(d => d.clientId === currentUser.id);
+    const myCL = getClientChecklist(currentUser.id);
+    const pendingCount = myCL.filter(r => r.status === "Pending").length;
+    return (
+      <div className="min-h-screen bg-gray-50">
+        {toast && <div className="fixed top-5 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm px-5 py-2 rounded-full shadow z-50">{toast}</div>}
+        <header className="bg-white border-b border-gray-100 px-6 py-4 flex justify-between items-center">
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-widest">Document Portal</p>
+            <h1 className="text-base font-semibold text-gray-800">{FIRM}</h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-gray-500">{currentUser.name}</span>
+            <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-700">Sign out</button>
+          </div>
+        </header>
+        {pendingCount > 0 && (
+          <div className="bg-amber-50 border-b border-amber-100 px-6 py-3 flex items-center gap-2">
+            <span className="text-amber-600 text-sm">⚠️</span>
+            <p className="text-amber-700 text-sm">You have <strong>{pendingCount}</strong> pending document{pendingCount > 1 ? "s" : ""} required. Please upload them at the earliest.</p>
+          </div>
+        )}
+        <div className="max-w-2xl mx-auto p-6 space-y-6">
+          <div className="bg-white rounded-xl border border-gray-100 p-6">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">Document Checklist</p>
+            <div className="space-y-2">
+              {myCL.map((r, i) => (
+                <div key={i} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${r.status !== "Pending" ? "bg-green-400" : "bg-amber-400"}`}></span>
+                    <span className="text-sm text-gray-700">{r.item}</span>
+                  </div>
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusColors[r.status] || "bg-gray-50 text-gray-500"}`}>{r.status}</span>
+                </div>
+              ))}
             </div>
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-              {!showReg ? (<>
-                <div className="space-y-4">
-                  <div><label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Name or Email</label>
-                    <input className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50" placeholder="Your name or email" value={loginForm.identity} onChange={e=>setLoginForm({...loginForm,identity:e.target.value})} onKeyDown={e=>e.key==="Enter"&&login()}/>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 p-6">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">Upload Documents</p>
+            <label className="flex flex-col items-center justify-center border border-dashed border-gray-200 rounded-xl p-8 cursor-pointer hover:bg-gray-50 transition">
+              <span className="text-2xl mb-2">↑</span>
+              <span className="text-sm text-gray-600 font-medium">Click to upload</span>
+              <span className="text-xs text-gray-400 mt-1">PDF, Images, Word, Excel</span>
+              <input type="file" multiple className="hidden" onChange={handleUpload} />
+            </label>
+            {uploading && <p className="text-center text-gray-400 text-xs mt-3">Uploading...</p>}
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 p-6">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">Uploaded Files ({myDocs.length})</p>
+            {myDocs.length === 0
+              ? <p className="text-gray-300 text-sm text-center py-6">No files uploaded yet.</p>
+              : <div className="divide-y divide-gray-50">
+                {myDocs.map(doc => (
+                  <div key={doc.id} className="flex items-center justify-between py-3">
+                    <div className="flex items-center gap-3">
+                      <span>{getFileIcon(doc.type)}</span>
+                      <div>
+                        <p className="text-sm text-gray-700 truncate max-w-xs">{doc.name}</p>
+                        <p className="text-xs text-gray-400">{formatSize(doc.size)} · {doc.uploadedAt}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusColors[doc.status]}`}>{doc.status}</span>
+                      <button onClick={() => downloadBase64(doc.data, doc.name)} className="text-xs text-gray-400 hover:text-gray-700">↓</button>
+                    </div>
                   </div>
-                  <div><label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Password</label>
-                    <input type="password" className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50" placeholder="Password" value={loginForm.password} onChange={e=>setLoginForm({...loginForm,password:e.target.value})} onKeyDown={e=>e.key==="Enter"&&login()}/>
-                  </div>
-                  {loginErr && <p className="text-red-500 text-xs">{loginErr}</p>}
-                  <button onClick={login} className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition">Sign In</button>
-                </div>
-                <p className="text-center text-xs text-gray-400 mt-5">New client? <button className="text-gray-700 font-medium hover:underline" onClick={()=>setShowReg(true)}>Create account</button></p>
-              </>) : (<>
-                <h2 className="text-sm font-semibold text-gray-700 mb-5 uppercase tracking-wide">New Client Account</h2>
-                <div className="space-y-4">
-                  <div><label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Full Name</label>
-                    <input className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50" placeholder="Full name" value={regForm.name} onChange={e=>setRegForm({...regForm,name:e.target.value})}/>
-                  </div>
-                  <div><label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Email</label>
-                    <input type="email" className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50" placeholder="Email address" value={regForm.email} onChange={e=>setRegForm({...regForm,email:e.target.value})}/>
-                  </div>
-                  <div><label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Password</label>
-                    <input type="password" className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50" placeholder="Choose a password" value={regForm.password} onChange={e=>setRegForm({...regForm,password:e.target.value})}/>
-                  </div>
-                  {regErr && <p className="text-red-500 text-xs">{regErr}</p>}
-                  <button onClick={register} className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition">Register</button>
-                  <button onClick={()=>{setShowReg(false);setRegErr("");}} className="w-full text-gray-500 py-2 text-sm hover:text-gray-700 transition">← Back</button>
-                </div>
-              </>)}
+                ))}
+              </div>
+            }
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── ADMIN ──
+  const viewDocs = activeClient
+    ? docs.filter(d => d.clientId === activeClient.id)
+    : statusFilter === "all" ? docs : docs.filter(d => d.status === statusFilter);
+  const activeCL = activeClient ? getClientChecklist(activeClient.id) : [];
+  const activeReminders = activeClient ? (reminders[activeClient.id] || []) : [];
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      {toast && <div className="fixed top-5 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm px-5 py-2 rounded-full shadow z-50">{toast}</div>}
+      {showReminderModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <h3 className="text-sm font-semibold text-gray-800 mb-1">Send Reminder</h3>
+            <p className="text-xs text-gray-400 mb-4">To: {reminderTarget?.email}</p>
+            <textarea rows={10} className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-700 focus:outline-none focus:border-gray-400 bg-gray-50 resize-none"
+              value={reminderMsg} onChange={e => setReminderMsg(e.target.value)} />
+            <p className="text-xs text-gray-400 mt-2 mb-4">This reminder will be logged and copied to clipboard.</p>
+            <div className="flex gap-2">
+              <button onClick={sendReminder} className="flex-1 bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition">Log & Copy</button>
+              <button onClick={() => { navigator.clipboard.writeText(reminderMsg); notify("Copied!"); }} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm hover:bg-gray-50 transition">Copy Only</button>
+              <button onClick={() => setShowReminderModal(false)} className="px-4 border border-gray-200 text-gray-400 rounded-lg text-sm hover:bg-gray-50 transition">Cancel</button>
             </div>
           </div>
         </div>
-      );
-
-      // CLIENT
-      if(screen==="client") {
-        const myDocs = docs.filter(d=>d.clientId===user.id);
-        const myCL = getCL(user.id);
-        const pendingCount = myCL.filter(r=>r.status==="Pending").length;
-        return (
-          <div className="min-h-screen bg-gray-50">
-            <Toast msg={toast}/>
-            <header className="bg-white border-b border-gray-100 px-6 py-4 flex justify-between items-center">
-              <div><p className="text-xs text-gray-400 uppercase tracking-widest">Document Portal</p><h1 className="text-base font-semibold text-gray-800">{FIRM}</h1></div>
-              <div className="flex items-center gap-4"><span className="text-sm text-gray-500">{user.name}</span><button onClick={logout} className="text-xs text-gray-400 hover:text-gray-700">Sign out</button></div>
-            </header>
-            {pendingCount>0 && <div className="bg-amber-50 border-b border-amber-100 px-6 py-3 flex items-center gap-2"><span>⚠️</span><p className="text-amber-700 text-sm">You have <strong>{pendingCount}</strong> pending document{pendingCount>1?"s":""} required. Please upload them at the earliest.</p></div>}
-            <div className="max-w-2xl mx-auto p-6 space-y-6">
-              <div className="bg-white rounded-xl border border-gray-100 p-6">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">Document Checklist</p>
-                <div className="space-y-1">
-                  {myCL.map((r,i)=>(
-                    <div key={i} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                      <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${r.status!=="Pending"?"bg-green-400":"bg-amber-400"}`}></span><span className="text-sm text-gray-700">{r.item}</span></div>
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${SC[r.status]||"bg-gray-50 text-gray-500"}`}>{r.status}</span>
+      )}
+      <aside className="w-56 bg-white border-r border-gray-100 flex flex-col min-h-screen">
+        <div className="p-5 border-b border-gray-100">
+          <p className="text-xs text-gray-400 uppercase tracking-widest mb-0.5">Admin</p>
+          <h1 className="text-sm font-semibold text-gray-800 leading-tight">{FIRM}</h1>
+        </div>
+        <nav className="p-3 flex-1 overflow-y-auto">
+          <button onClick={() => { setActiveClient(null); setAdminTab("docs"); setStatusFilter("all"); }}
+            className={`w-full text-left px-3 py-2 rounded-lg text-sm mb-1 transition ${!activeClient && adminTab === "docs" ? "bg-gray-100 text-gray-800 font-medium" : "text-gray-500 hover:bg-gray-50"}`}>
+            All Documents
+          </button>
+          <button onClick={() => { setActiveClient(null); setAdminTab("checklist"); }}
+            className={`w-full text-left px-3 py-2 rounded-lg text-sm mb-1 transition ${adminTab === "checklist" && !activeClient ? "bg-gray-100 text-gray-800 font-medium" : "text-gray-500 hover:bg-gray-50"}`}>
+            Document Checklist
+          </button>
+          <p className="text-xs text-gray-300 uppercase tracking-widest px-3 mt-4 mb-2">Clients</p>
+          {clients.length === 0 && <p className="text-xs text-gray-300 px-3">No clients yet</p>}
+          {clients.map(c => {
+            const cl = getClientChecklist(c.id);
+            const pending = cl.filter(r => r.status === "Pending").length;
+            return (
+              <button key={c.id} onClick={() => { setActiveClient(c); setAdminTab("docs"); }}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex justify-between items-center mb-0.5 ${activeClient?.id === c.id ? "bg-gray-100 text-gray-800 font-medium" : "text-gray-500 hover:bg-gray-50"}`}>
+                <span className="truncate">{c.name}</span>
+                {pending > 0 && <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">{pending}</span>}
+              </button>
+            );
+          })}
+        </nav>
+        <div className="p-4 border-t border-gray-100">
+          <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600">Sign out</button>
+        </div>
+      </aside>
+      <main className="flex-1 p-8 overflow-y-auto">
+        {!activeClient && adminTab === "checklist" && (
+          <>
+            <h2 className="text-lg font-semibold text-gray-800 mb-6">Document Checklist</h2>
+            <div className="bg-white rounded-xl border border-gray-100 p-6 max-w-xl">
+              <p className="text-xs text-gray-400 mb-4">This checklist applies to all clients.</p>
+              <div className="space-y-2 mb-6">
+                {checklist.map((item, i) => (
+                  <div key={i} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                    <span className="text-sm text-gray-700">{item}</span>
+                    <button onClick={() => removeChecklistItem(i)} className="text-xs text-gray-300 hover:text-red-400">Remove</button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input className="flex-1 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
+                  placeholder="Add new document..." value={newDocItem} onChange={e => setNewDocItem(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && addChecklistItem()} />
+                <button onClick={addChecklistItem} className="bg-gray-800 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-700 transition">Add</button>
+              </div>
+            </div>
+          </>
+        )}
+        {!activeClient && adminTab === "docs" && (
+          <>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-lg font-semibold text-gray-800">All Documents</h2>
+              <div className="flex gap-1">
+                {["all", ...statusOrder].map(s => (
+                  <button key={s} onClick={() => setStatusFilter(s)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${statusFilter === s ? "bg-gray-800 text-white" : "text-gray-500 hover:bg-gray-100"}`}>
+                    {s === "all" ? "All" : s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-4 mb-6">
+              <div className="bg-white rounded-xl border border-gray-100 p-4 text-center">
+                <p className="text-xl font-semibold text-gray-700">{clients.length}</p>
+                <p className="text-xs text-gray-400 mt-0.5">Clients</p>
+              </div>
+              {statusOrder.map(s => (
+                <div key={s} className="bg-white rounded-xl border border-gray-100 p-4 text-center">
+                  <p className="text-xl font-semibold text-gray-700">{docs.filter(d => d.status === s).length}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{s}</p>
+                </div>
+              ))}
+            </div>
+            <DocsTable docs={viewDocs} showClient onStatus={updateDocStatus} onDelete={deleteDoc} onDownload={downloadBase64} getFileIcon={getFileIcon} formatSize={formatSize} statusColors={statusColors} statusOrder={statusOrder} />
+          </>
+        )}
+        {activeClient && (
+          <>
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <button onClick={() => setActiveClient(null)} className="text-xs text-gray-400 hover:text-gray-600 mb-1 block">← All</button>
+                <h2 className="text-lg font-semibold text-gray-800">{activeClient.name}</h2>
+                <p className="text-xs text-gray-400">{activeClient.email}</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => openReminderModal(activeClient)} className="text-sm border border-amber-300 text-amber-700 px-4 py-2 rounded-lg hover:bg-amber-50 transition">Send Reminder</button>
+                <button onClick={() => exportClientDocs(activeClient.id)} className="text-sm border border-gray-200 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-50 transition">Export All</button>
+              </div>
+            </div>
+            <div className="flex gap-1 mb-6">
+              {["docs", "checklist", "reminders"].map(t => (
+                <button key={t} onClick={() => setAdminTab(t)}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-medium capitalize transition ${adminTab === t ? "bg-gray-800 text-white" : "text-gray-500 hover:bg-gray-100"}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+            {adminTab === "docs" && (
+              <>
+                <div className="grid grid-cols-3 gap-4 mb-6">
+                  {statusOrder.map(s => (
+                    <div key={s} className="bg-white rounded-xl border border-gray-100 p-4 text-center">
+                      <p className="text-xl font-semibold text-gray-700">{docs.filter(d => d.clientId === activeClient.id && d.status === s).length}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{s}</p>
                     </div>
                   ))}
                 </div>
-              </div>
+                <DocsTable docs={viewDocs} onStatus={updateDocStatus} onDelete={deleteDoc} onDownload={downloadBase64} getFileIcon={getFileIcon} formatSize={formatSize} statusColors={statusColors} statusOrder={statusOrder} />
+              </>
+            )}
+            {adminTab === "checklist" && (
               <div className="bg-white rounded-xl border border-gray-100 p-6">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">Upload Documents</p>
-                <label className="flex flex-col items-center justify-center border border-dashed border-gray-200 rounded-xl p-8 cursor-pointer hover:bg-gray-50 transition">
-                  <span className="text-2xl mb-2">↑</span><span className="text-sm text-gray-600 font-medium">Click to upload</span><span className="text-xs text-gray-400 mt-1">PDF, Images, Word, Excel</span>
-                  <input type="file" multiple className="hidden" onChange={upload}/>
-                </label>
-                {uploading && <p className="text-center text-gray-400 text-xs mt-3">Uploading...</p>}
-              </div>
-              <div className="bg-white rounded-xl border border-gray-100 p-6">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">Uploaded Files ({myDocs.length})</p>
-                {myDocs.length===0 ? <p className="text-gray-300 text-sm text-center py-6">No files uploaded yet.</p>
-                  : <div className="divide-y divide-gray-50">{myDocs.map(d=>(
-                    <div key={d.id} className="flex items-center justify-between py-3">
-                      <div className="flex items-center gap-3"><span>{fIcon(d.type)}</span><div><p className="text-sm text-gray-700 truncate max-w-xs">{d.name}</p><p className="text-xs text-gray-400">{fmtSize(d.size)} · {d.uploadedAt}</p></div></div>
-                      <div className="flex items-center gap-3"><span className={`text-xs px-2.5 py-1 rounded-full font-medium ${SC[d.status]}`}>{d.status}</span><button onClick={()=>dlB64(d.data,d.name)} className="text-xs text-gray-400 hover:text-gray-700">↓</button></div>
-                    </div>
-                  ))}</div>
-                }
-              </div>
-            </div>
-          </div>
-        );
-      }
-
-      // ADMIN
-      const viewDocs = activeClient ? docs.filter(d=>d.clientId===activeClient.id) : statusFilter==="all" ? docs : docs.filter(d=>d.status===statusFilter);
-      const activeCL = activeClient ? getCL(activeClient.id) : [];
-      const activeRem = activeClient ? (reminders[activeClient.id]||[]) : [];
-
-      return (
-        <div className="min-h-screen bg-gray-50 flex">
-          <Toast msg={toast}/>
-          {reminderModal && (
-            <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-                <h3 className="text-sm font-semibold text-gray-800 mb-1">Send Reminder</h3>
-                <p className="text-xs text-gray-400 mb-4">To: {reminderTarget?.email}</p>
-                <textarea rows={10} className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-700 focus:outline-none bg-gray-50 resize-none" value={reminderMsg} onChange={e=>setReminderMsg(e.target.value)}/>
-                <p className="text-xs text-gray-400 mt-2 mb-4">Reminder will be logged and copied to clipboard.</p>
-                <div className="flex gap-2">
-                  <button onClick={sendReminder} className="flex-1 bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700">Log & Copy</button>
-                  <button onClick={()=>{navigator.clipboard.writeText(reminderMsg);notify("Copied!");}} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm hover:bg-gray-50">Copy Only</button>
-                  <button onClick={()=>setReminderModal(false)} className="px-4 border border-gray-200 text-gray-400 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
-                </div>
-              </div>
-            </div>
-          )}
-          <aside className="w-56 bg-white border-r border-gray-100 flex flex-col min-h-screen">
-            <div className="p-5 border-b border-gray-100"><p className="text-xs text-gray-400 uppercase tracking-widest mb-0.5">Admin</p><h1 className="text-sm font-semibold text-gray-800 leading-tight">{FIRM}</h1></div>
-            <nav className="p-3 flex-1 overflow-y-auto">
-              <button onClick={()=>{setActiveClient(null);setAdminTab("docs");setStatusFilter("all");}} className={`w-full text-left px-3 py-2 rounded-lg text-sm mb-1 transition ${!activeClient&&adminTab==="docs"?"bg-gray-100 text-gray-800 font-medium":"text-gray-500 hover:bg-gray-50"}`}>All Documents</button>
-              <button onClick={()=>{setActiveClient(null);setAdminTab("checklist");}} className={`w-full text-left px-3 py-2 rounded-lg text-sm mb-1 transition ${adminTab==="checklist"&&!activeClient?"bg-gray-100 text-gray-800 font-medium":"text-gray-500 hover:bg-gray-50"}`}>Document Checklist</button>
-              <p className="text-xs text-gray-300 uppercase tracking-widest px-3 mt-4 mb-2">Clients</p>
-              {clients.length===0 && <p className="text-xs text-gray-300 px-3">No clients yet</p>}
-              {clients.map(c=>{
-                const pending = getCL(c.id).filter(r=>r.status==="Pending").length;
-                return <button key={c.id} onClick={()=>{setActiveClient(c);setAdminTab("docs");}} className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex justify-between items-center mb-0.5 ${activeClient?.id===c.id?"bg-gray-100 text-gray-800 font-medium":"text-gray-500 hover:bg-gray-50"}`}>
-                  <span className="truncate">{c.name}</span>
-                  {pending>0 && <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">{pending}</span>}
-                </button>;
-              })}
-            </nav>
-            <div className="p-4 border-t border-gray-100"><button onClick={logout} className="text-xs text-gray-400 hover:text-gray-600">Sign out</button></div>
-          </aside>
-          <main className="flex-1 p-8 overflow-y-auto">
-            {!activeClient && adminTab==="checklist" && (<>
-              <h2 className="text-lg font-semibold text-gray-800 mb-6">Document Checklist</h2>
-              <div className="bg-white rounded-xl border border-gray-100 p-6 max-w-xl">
-                <p className="text-xs text-gray-400 mb-4">This checklist applies to all clients.</p>
-                <div className="space-y-1 mb-6">{checklist.map((item,i)=>(
-                  <div key={i} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                    <span className="text-sm text-gray-700">{item}</span>
-                    <button onClick={()=>removeCLItem(i)} className="text-xs text-gray-300 hover:text-red-400">Remove</button>
-                  </div>
-                ))}</div>
-                <div className="flex gap-2">
-                  <input className="flex-1 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-gray-400 bg-gray-50" placeholder="Add new document..." value={newItem} onChange={e=>setNewItem(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCLItem()}/>
-                  <button onClick={addCLItem} className="bg-gray-800 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-700">Add</button>
-                </div>
-              </div>
-            </>)}
-            {!activeClient && adminTab==="docs" && (<>
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-lg font-semibold text-gray-800">All Documents</h2>
-                <div className="flex gap-1">{["all",...STATUS].map(s=>(
-                  <button key={s} onClick={()=>setStatusFilter(s)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${statusFilter===s?"bg-gray-800 text-white":"text-gray-500 hover:bg-gray-100"}`}>{s==="all"?"All":s}</button>
-                ))}</div>
-              </div>
-              <div className="grid grid-cols-4 gap-4 mb-6">
-                <div className="bg-white rounded-xl border border-gray-100 p-4 text-center"><p className="text-xl font-semibold text-gray-700">{clients.length}</p><p className="text-xs text-gray-400 mt-0.5">Clients</p></div>
-                {STATUS.map(s=><div key={s} className="bg-white rounded-xl border border-gray-100 p-4 text-center"><p className="text-xl font-semibold text-gray-700">{docs.filter(d=>d.status===s).length}</p><p className="text-xs text-gray-400 mt-0.5">{s}</p></div>)}
-              </div>
-              <DocsTable docs={viewDocs} showClient onStatus={updateDocStatus} onDelete={deleteDoc}/>
-            </>)}
-            {activeClient && (<>
-              <div className="flex justify-between items-center mb-6">
-                <div><button onClick={()=>setActiveClient(null)} className="text-xs text-gray-400 hover:text-gray-600 mb-1 block">← All</button><h2 className="text-lg font-semibold text-gray-800">{activeClient.name}</h2><p className="text-xs text-gray-400">{activeClient.email}</p></div>
-                <div className="flex gap-2">
-                  <button onClick={()=>openReminder(activeClient)} className="text-sm border border-amber-300 text-amber-700 px-4 py-2 rounded-lg hover:bg-amber-50 transition">Send Reminder</button>
-                  <button onClick={()=>exportAll(activeClient.id)} className="text-sm border border-gray-200 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-50 transition">Export All</button>
-                </div>
-              </div>
-              <div className="flex gap-1 mb-6">{["docs","checklist","reminders"].map(t=>(
-                <button key={t} onClick={()=>setAdminTab(t)} className={`px-4 py-1.5 rounded-lg text-xs font-medium capitalize transition ${adminTab===t?"bg-gray-800 text-white":"text-gray-500 hover:bg-gray-100"}`}>{t}</button>
-              ))}</div>
-              {adminTab==="docs" && (<>
-                <div className="grid grid-cols-3 gap-4 mb-6">{STATUS.map(s=><div key={s} className="bg-white rounded-xl border border-gray-100 p-4 text-center"><p className="text-xl font-semibold text-gray-700">{docs.filter(d=>d.clientId===activeClient.id&&d.status===s).length}</p><p className="text-xs text-gray-400 mt-0.5">{s}</p></div>)}</div>
-                <DocsTable docs={viewDocs} onStatus={updateDocStatus} onDelete={deleteDoc}/>
-              </>)}
-              {adminTab==="checklist" && (
-                <div className="bg-white rounded-xl border border-gray-100 p-6">
-                  <p className="text-xs text-gray-400 mb-4">Track required documents for {activeClient.name}.</p>
-                  <div className="divide-y divide-gray-50">{activeCL.map((r,i)=>(
+                <p className="text-xs text-gray-400 mb-4">Track required documents for {activeClient.name}.</p>
+                <div className="divide-y divide-gray-50">
+                  {activeCL.map((r, i) => (
                     <div key={i} className="flex items-center justify-between py-3">
-                      <div className="flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${r.status!=="Pending"?"bg-green-400":"bg-amber-400"}`}></span><span className="text-sm text-gray-700">{r.item}</span></div>
-                      <select value={r.status} onChange={e=>updateCLStatus(activeClient.id,i,e.target.value)} className={`text-xs px-2 py-1 rounded-full font-medium border-0 cursor-pointer ${SC[r.status]}`}>{STATUS.map(s=><option key={s} value={s}>{s}</option>)}</select>
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${r.status !== "Pending" ? "bg-green-400" : "bg-amber-400"}`}></span>
+                        <span className="text-sm text-gray-700">{r.item}</span>
+                      </div>
+                      <select value={r.status} onChange={e => updateClientChecklistStatus(activeClient.id, i, e.target.value)}
+                        className={`text-xs px-2.5 py-1 rounded-full font-medium border-0 cursor-pointer ${statusColors[r.status]}`}>
+                        {statusOrder.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
                     </div>
-                  ))}</div>
-                  <div className="mt-4 pt-4 border-t border-gray-50 flex justify-between text-xs text-gray-400">
-                    <span>{activeCL.filter(r=>r.status!=="Pending").length} / {activeCL.length} received</span>
-                    <span>{activeCL.filter(r=>r.status==="Pending").length} pending</span>
-                  </div>
+                  ))}
                 </div>
-              )}
-              {adminTab==="reminders" && (
-                <div className="bg-white rounded-xl border border-gray-100 p-6">
-                  <p className="text-xs text-gray-400 mb-4">Reminder history for {activeClient.name}</p>
-                  {activeRem.length===0 ? <p className="text-gray-300 text-sm text-center py-8">No reminders sent yet.</p>
-                    : <div className="space-y-4">{[...activeRem].reverse().map(r=>(
+                <div className="mt-4 pt-4 border-t border-gray-50 flex justify-between text-xs text-gray-400">
+                  <span>{activeCL.filter(r => r.status !== "Pending").length} / {activeCL.length} received</span>
+                  <span>{activeCL.filter(r => r.status === "Pending").length} pending</span>
+                </div>
+              </div>
+            )}
+            {adminTab === "reminders" && (
+              <div className="bg-white rounded-xl border border-gray-100 p-6">
+                <p className="text-xs text-gray-400 mb-4">Reminder history for {activeClient.name}</p>
+                {activeReminders.length === 0
+                  ? <p className="text-gray-300 text-sm text-center py-8">No reminders sent yet.</p>
+                  : <div className="space-y-4">
+                    {[...activeReminders].reverse().map(r => (
                       <div key={r.id} className="border border-gray-100 rounded-xl p-4">
-                        <div className="flex justify-between mb-2"><span className="text-xs text-gray-400">To: {r.email}</span><span className="text-xs text-gray-400">{r.sentAt}</span></div>
+                        <div className="flex justify-between mb-2">
+                          <span className="text-xs text-gray-400">To: {r.email}</span>
+                          <span className="text-xs text-gray-400">{r.sentAt}</span>
+                        </div>
                         <pre className="text-xs text-gray-600 whitespace-pre-wrap font-sans">{r.message}</pre>
                       </div>
-                    ))}</div>
-                  }
-                </div>
-              )}
-            </>)}
-          </main>
-        </div>
-      );
-    }
+                    ))}
+                  </div>
+                }
+              </div>
+            )}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
-  </script>
-</body>
-</html>
+function DocsTable({ docs, showClient, onStatus, onDelete, onDownload, getFileIcon, formatSize, statusColors, statusOrder }) {
+  if (docs.length === 0) return <div className="bg-white rounded-xl border border-gray-100 p-12 text-center text-gray-300 text-sm">No documents found.</div>;
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-50">
+            <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium uppercase tracking-wide">File</th>
+            {showClient && <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium uppercase tracking-wide">Client</th>}
+            <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium uppercase tracking-wide">Size</th>
+            <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium uppercase tracking-wide">Date</th>
+            <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium uppercase tracking-wide">Status</th>
+            <th className="px-5 py-3"></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-50">
+          {docs.map(doc => (
+            <tr key={doc.id} className="hover:bg-gray-50 transition">
+              <td className="px-5 py-3"><div className="flex items-center gap-2"><span>{getFileIcon(doc.type)}</span><span className="text-gray-700 truncate max-w-xs">{doc.name}</span></div></td>
+              {showClient && <td className="px-5 py-3 text-gray-500">{doc.clientName}</td>}
+              <td className="px-5 py-3 text-gray-400">{formatSize(doc.size)}</td>
+              <td className="px-5 py-3 text-gray-400">{doc.uploadedAt}</td>
+              <td className="px-5 py-3">
+                <select value={doc.status} onChange={e => onStatus(doc.id, e.target.value)}
+                  className={`text-xs px-2.5 py-1 rounded-full font-medium border-0 cursor-pointer ${statusColors[doc.status]}`}>
+                  {statusOrder.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </td>
+              <td className="px-5 py-3">
+                <div className="flex gap-3 justify-end">
+                  <button onClick={() => onDownload(doc.data, doc.name)} className="text-xs text-gray-400 hover:text-gray-700">Download</button>
+                  <button onClick={() => onDelete(doc.id)} className="text-xs text-gray-300 hover:text-red-400">Delete</button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
