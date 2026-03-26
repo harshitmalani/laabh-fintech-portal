@@ -1,555 +1,590 @@
-import { useState, useEffect } from "react";
-
-const ADMIN_USER = { username: "admin", password: "admin123", isAdmin: true };
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Laabh Fintech Services – Document Portal</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#f9fafb; }
+  .fade { animation: fadeIn 0.2s ease; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  select { appearance: none; -webkit-appearance: none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
 const FIRM = "Laabh Fintech Services";
+const ADMIN_PASS = "admin123";
 
-const DEFAULT_CHECKLIST = [
-  "PAN Card", "Aadhaar Card", "Passport / Voter ID",
-  "Bank Statement (Last 6 months)", "ITR (Last 2 years)",
-  "Salary Slips (Last 3 months)", "Form 16", "GST Registration Certificate",
-  "Balance Sheet & P&L", "Partnership Deed / MOA / AOA"
-];
-
-const statusColors = {
-  Pending: "bg-amber-50 text-amber-700",
-  Received: "bg-blue-50 text-blue-700",
-  Approved: "bg-green-50 text-green-700",
+const ENTITY_DOCS = {
+  "Individual": ["PAN Card","Aadhaar Card","Passport / Voter ID","Bank Statement (Last 6 months)","ITR (Last 2 years)","Salary Slips (Last 3 months)","Form 16"],
+  "Proprietorship": ["PAN Card (Proprietor)","Aadhaar Card (Proprietor)","GST Registration Certificate","Bank Statement (Last 6 months)","ITR (Last 2 years)","Shop & Establishment Certificate","Udyam Registration"],
+  "Partnership Firm": ["PAN Card (Firm)","Partnership Deed","PAN Card (All Partners)","Aadhaar Card (All Partners)","GST Registration Certificate","Bank Statement (Last 6 months)","ITR (Last 2 years)","Balance Sheet & P&L"],
+  "LLP": ["LLP Agreement","Certificate of Incorporation","PAN Card (LLP)","PAN Card (Designated Partners)","Aadhaar Card (Designated Partners)","GST Registration Certificate","Bank Statement (Last 6 months)","ITR (Last 2 years)","Balance Sheet & P&L"],
+  "Private Limited Company": ["Certificate of Incorporation","MOA & AOA","PAN Card (Company)","PAN Card (Directors)","Aadhaar Card (Directors)","DIN of Directors","GST Registration Certificate","Bank Statement (Last 6 months)","ITR (Last 2 years)","Balance Sheet & P&L","Board Resolution"],
+  "Public Limited Company": ["Certificate of Incorporation","MOA & AOA","PAN Card (Company)","PAN Card (Directors)","Aadhaar Card (Directors)","DIN of Directors","GST Registration Certificate","Bank Statement (Last 6 months)","ITR (Last 2 years)","Balance Sheet & P&L","Board Resolution","Annual Return (MCA)"],
+  "HUF": ["PAN Card (HUF)","PAN Card (Karta)","Aadhaar Card (Karta)","HUF Deed","Bank Statement (Last 6 months)","ITR (Last 2 years)"],
+  "Trust / NGO": ["Trust Deed / MOA","Registration Certificate","PAN Card (Trust)","PAN Card (Trustees)","Aadhaar Card (Trustees)","12A & 80G Certificate","Bank Statement (Last 6 months)","ITR (Last 2 years)","Audited Accounts"]
 };
-const statusOrder = ["Pending", "Received", "Approved"];
+const ENTITIES = Object.keys(ENTITY_DOCS);
+const STATUS_LIST = ["Pending","Received","Approved"];
+const SC = {Pending:"background:#fffbeb;color:#b45309",Received:"background:#eff6ff;color:#1d4ed8",Approved:"background:#f0fdf4;color:#15803d"};
 
-// ── LocalStorage helpers (replaces window.storage for standalone app) ──
+// Storage
 const store = {
-  get: (key) => { try { const v = localStorage.getItem(key); return v ? { value: v } : null; } catch { return null; } },
-  set: (key, val) => { try { localStorage.setItem(key, val); } catch {} },
+  get: k => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
+  set: (k,v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
+
+// State
+let state = {
+  screen: "login", // login | register | client | admin
+  user: null,
+  clients: store.get("lfs_clients") || [],
+  docs: store.get("lfs_docs") || [],
+  ccl: store.get("lfs_ccl") || {},
+  reminders: store.get("lfs_reminders") || {},
+  regStep: 1,
+  regData: { name:"", email:"", password:"", entity:"", uploads:{} },
+  loginIdentity: "", loginPassword: "", loginErr: "",
+  regErr: "",
+  toast: "",
+  adminTab: "docs",
+  activeClientId: null,
+  statusFilter: "all",
+  reminderModal: false,
+  reminderTarget: null,
+  reminderMsg: "",
+};
+
+function save(key, val) { state[key] = val; store.set("lfs_"+key, val); }
+function getClient(id) { return state.clients.find(c=>c.id===id); }
+function getCL(cid) { return state.ccl[cid] || []; }
+
+function notify(msg) {
+  state.toast = msg;
+  render();
+  setTimeout(() => { state.toast = ""; render(); }, 3000);
+}
 
 function fileToBase64(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result);
-    r.onerror = rej;
-    r.readAsDataURL(file);
-  });
+  return new Promise((res,rej) => { const r = new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); });
 }
-function downloadBase64(dataUrl, filename) {
-  const a = document.createElement("a"); a.href = dataUrl; a.download = filename; a.click();
-}
-function formatSize(b) {
-  if (b < 1024) return b + " B";
-  if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
-  return (b / 1048576).toFixed(1) + " MB";
-}
-function getFileIcon(type) {
-  if (type.includes("pdf")) return "📄";
-  if (type.includes("image")) return "🖼️";
-  if (type.includes("word") || type.includes("document")) return "📝";
-  if (type.includes("sheet") || type.includes("excel")) return "📊";
-  return "📎";
+function dlB64(url, name) { const a = document.createElement("a"); a.href=url; a.download=name; a.click(); }
+function fmtSize(b) { if(b<1024) return b+" B"; if(b<1048576) return (b/1024).toFixed(1)+" KB"; return (b/1048576).toFixed(1)+" MB"; }
+function fIcon(t) { if(!t) return "📎"; if(t.includes("pdf")) return "📄"; if(t.includes("image")) return "🖼️"; if(t.includes("word")||t.includes("document")) return "📝"; if(t.includes("sheet")||t.includes("excel")) return "📊"; return "📎"; }
+
+// ── RENDER ──
+function render() {
+  const app = document.getElementById("app");
+  if(state.screen === "login") app.innerHTML = renderLogin();
+  else if(state.screen === "register") app.innerHTML = renderRegister();
+  else if(state.screen === "client") app.innerHTML = renderClient();
+  else if(state.screen === "admin") app.innerHTML = renderAdmin();
+  bindEvents();
 }
 
-export default function App() {
-  const [screen, setScreen] = useState("login");
-  const [currentUser, setCurrentUser] = useState(null);
-  const [clients, setClients] = useState([]);
-  const [docs, setDocs] = useState([]);
-  const [checklist, setChecklist] = useState(DEFAULT_CHECKLIST);
-  const [clientChecklists, setClientChecklists] = useState({});
-  const [reminders, setReminders] = useState({});
-  const [loginForm, setLoginForm] = useState({ identity: "", password: "" });
-  const [loginError, setLoginError] = useState("");
-  const [activeClient, setActiveClient] = useState(null);
-  const [adminTab, setAdminTab] = useState("docs");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [regForm, setRegForm] = useState({ name: "", email: "", password: "" });
-  const [showReg, setShowReg] = useState(false);
-  const [regError, setRegError] = useState("");
-  const [toast, setToast] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [newDocItem, setNewDocItem] = useState("");
-  const [reminderMsg, setReminderMsg] = useState("");
-  const [showReminderModal, setShowReminderModal] = useState(false);
-  const [reminderTarget, setReminderTarget] = useState(null);
+function toast() {
+  if(!state.toast) return "";
+  return `<div style="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#1f2937;color:#fff;padding:8px 20px;border-radius:999px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15)">${state.toast}</div>`;
+}
 
-  useEffect(() => {
-    try { const c = store.get("clients"); if (c) setClients(JSON.parse(c.value)); } catch {}
-    try { const d = store.get("docs"); if (d) setDocs(JSON.parse(d.value)); } catch {}
-    try { const ch = store.get("checklist"); if (ch) setChecklist(JSON.parse(ch.value)); } catch {}
-    try { const cc = store.get("clientChecklists"); if (cc) setClientChecklists(JSON.parse(cc.value)); } catch {}
-    try { const rm = store.get("reminders"); if (rm) setReminders(JSON.parse(rm.value)); } catch {}
-  }, []);
+function statusBadge(s) {
+  return `<span style="font-size:11px;padding:3px 10px;border-radius:999px;font-weight:600;${SC[s]||''}">${s}</span>`;
+}
 
-  function saveClients(d) { setClients(d); store.set("clients", JSON.stringify(d)); }
-  function saveDocs(d) { setDocs(d); store.set("docs", JSON.stringify(d)); }
-  function saveChecklist(d) { setChecklist(d); store.set("checklist", JSON.stringify(d)); }
-  function saveClientChecklists(d) { setClientChecklists(d); store.set("clientChecklists", JSON.stringify(d)); }
-  function saveReminders(d) { setReminders(d); store.set("reminders", JSON.stringify(d)); }
-
-  function notify(msg) { setToast(msg); setTimeout(() => setToast(""), 3000); }
-
-  function handleLogin() {
-    if (loginForm.identity === "admin" && loginForm.password === ADMIN_USER.password) {
-      setCurrentUser(ADMIN_USER); setScreen("admin"); setLoginError(""); return;
-    }
-    const client = clients.find(c =>
-      (c.name.toLowerCase() === loginForm.identity.trim().toLowerCase() ||
-        c.email.toLowerCase() === loginForm.identity.trim().toLowerCase()) &&
-      c.password === loginForm.password
-    );
-    if (client) { setCurrentUser(client); setScreen("client"); setLoginError(""); }
-    else setLoginError("Invalid name/email or password.");
-  }
-
-  function handleRegister() {
-    if (!regForm.name.trim() || !regForm.email.trim() || !regForm.password.trim()) { setRegError("Please fill all fields."); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(regForm.email)) { setRegError("Enter a valid email."); return; }
-    if (clients.find(c => c.email.toLowerCase() === regForm.email.trim().toLowerCase())) { setRegError("Email already registered."); return; }
-    const nc = { id: Date.now().toString(), name: regForm.name.trim(), email: regForm.email.trim().toLowerCase(), password: regForm.password };
-    const updatedClients = [...clients, nc];
-    saveClients(updatedClients);
-    const updatedCC = { ...clientChecklists, [nc.id]: checklist.map(item => ({ item, status: "Pending" })) };
-    saveClientChecklists(updatedCC);
-    setShowReg(false); setRegForm({ name: "", email: "", password: "" }); setRegError("");
-    notify("Account created. You can now sign in.");
-  }
-
-  function handleLogout() { setCurrentUser(null); setScreen("login"); setLoginForm({ identity: "", password: "" }); setActiveClient(null); setAdminTab("docs"); }
-
-  async function handleUpload(e) {
-    const files = Array.from(e.target.files);
-    if (!files.length) return;
-    setUploading(true);
-    const newDocs = [];
-    for (const file of files) {
-      const data = await fileToBase64(file);
-      newDocs.push({ id: Date.now().toString() + Math.random(), clientId: currentUser.id, clientName: currentUser.name, name: file.name, type: file.type, size: file.size, data, status: "Pending", uploadedAt: new Date().toLocaleDateString("en-IN") });
-    }
-    saveDocs([...docs, ...newDocs]);
-    setUploading(false); notify(`${newDocs.length} file(s) uploaded.`); e.target.value = "";
-  }
-
-  function updateDocStatus(docId, status) { saveDocs(docs.map(d => d.id === docId ? { ...d, status } : d)); }
-  function deleteDoc(docId) { saveDocs(docs.filter(d => d.id !== docId)); notify("Document removed."); }
-  function exportClientDocs(clientId) { docs.filter(d => d.clientId === clientId).forEach(d => downloadBase64(d.data, d.name)); }
-
-  function addChecklistItem() {
-    if (!newDocItem.trim()) return;
-    const updated = [...checklist, newDocItem.trim()];
-    saveChecklist(updated);
-    const updatedCC = { ...clientChecklists };
-    Object.keys(updatedCC).forEach(cid => { updatedCC[cid] = [...(updatedCC[cid] || []), { item: newDocItem.trim(), status: "Pending" }]; });
-    saveClientChecklists(updatedCC);
-    setNewDocItem(""); notify("Document added to checklist.");
-  }
-
-  function removeChecklistItem(idx) {
-    const item = checklist[idx];
-    const updated = checklist.filter((_, i) => i !== idx);
-    saveChecklist(updated);
-    const updatedCC = { ...clientChecklists };
-    Object.keys(updatedCC).forEach(cid => { updatedCC[cid] = (updatedCC[cid] || []).filter(r => r.item !== item); });
-    saveClientChecklists(updatedCC);
-  }
-
-  function updateClientChecklistStatus(clientId, itemIdx, status) {
-    const cc = { ...clientChecklists };
-    if (!cc[clientId]) return;
-    cc[clientId] = cc[clientId].map((r, i) => i === itemIdx ? { ...r, status } : r);
-    saveClientChecklists(cc);
-  }
-
-  function getClientChecklist(clientId) {
-    return clientChecklists[clientId] || checklist.map(item => ({ item, status: "Pending" }));
-  }
-
-  function openReminderModal(client) {
-    const cl = getClientChecklist(client.id);
-    const pending = cl.filter(r => r.status === "Pending").map(r => r.item);
-    const msg = pending.length > 0
-      ? `Dear ${client.name},\n\nThis is a reminder from ${FIRM} regarding the following pending documents required from your end:\n\n${pending.map((p, i) => `${i + 1}. ${p}`).join("\n")}\n\nKindly submit the above at your earliest convenience.\n\nRegards,\n${FIRM}`
-      : `Dear ${client.name},\n\nAll documents have been received. Thank you for your prompt submission.\n\nRegards,\n${FIRM}`;
-    setReminderMsg(msg); setReminderTarget(client); setShowReminderModal(true);
-  }
-
-  function sendReminder() {
-    const log = { id: Date.now().toString(), clientId: reminderTarget.id, clientName: reminderTarget.name, email: reminderTarget.email, message: reminderMsg, sentAt: new Date().toLocaleString("en-IN") };
-    const updated = { ...reminders, [reminderTarget.id]: [...(reminders[reminderTarget.id] || []), log] };
-    saveReminders(updated);
-    navigator.clipboard.writeText(reminderMsg).catch(() => {});
-    setShowReminderModal(false);
-    notify(`Reminder logged & copied for ${reminderTarget.name}.`);
-  }
-
-  // ── LOGIN ──
-  if (screen === "login") return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-      {toast && <div className="fixed top-5 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm px-5 py-2 rounded-full shadow z-50">{toast}</div>}
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <p className="text-xs tracking-widest text-gray-400 uppercase mb-1">Document Portal</p>
-          <h1 className="text-2xl font-semibold text-gray-800">{FIRM}</h1>
+// ── LOGIN ──
+function renderLogin() {
+  return `${toast()}
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px">
+    <div style="width:100%;max-width:360px">
+      <div style="text-align:center;margin-bottom:28px">
+        <p style="font-size:11px;letter-spacing:3px;color:#9ca3af;text-transform:uppercase;margin-bottom:4px">Document Portal</p>
+        <h1 style="font-size:22px;font-weight:600;color:#111827">${FIRM}</h1>
+      </div>
+      <div style="background:#fff;border-radius:16px;border:1px solid #f3f4f6;padding:32px;box-shadow:0 1px 4px rgba(0,0,0,0.05)">
+        <div style="margin-bottom:16px">
+          <label style="display:block;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Name or Email</label>
+          <input id="li" value="${state.loginIdentity}" placeholder="Your name or email" style="width:100%;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;font-size:13px;background:#f9fafb;box-sizing:border-box;outline:none"/>
         </div>
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-          {!showReg ? (
-            <>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Name or Email</label>
-                  <input className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
-                    placeholder="Your name or email" value={loginForm.identity}
-                    onChange={e => setLoginForm({ ...loginForm, identity: e.target.value })}
-                    onKeyDown={e => e.key === "Enter" && handleLogin()} />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Password</label>
-                  <input type="password" className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
-                    placeholder="Password" value={loginForm.password}
-                    onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
-                    onKeyDown={e => e.key === "Enter" && handleLogin()} />
-                </div>
-                {loginError && <p className="text-red-500 text-xs">{loginError}</p>}
-                <button onClick={handleLogin} className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition">Sign In</button>
-              </div>
-              <p className="text-center text-xs text-gray-400 mt-5">
-                New client? <button className="text-gray-700 font-medium hover:underline" onClick={() => setShowReg(true)}>Create account</button>
-              </p>
-            </>
-          ) : (
-            <>
-              <h2 className="text-sm font-semibold text-gray-700 mb-5 uppercase tracking-wide">New Client Account</h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Full Name</label>
-                  <input className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
-                    placeholder="Full name" value={regForm.name} onChange={e => setRegForm({ ...regForm, name: e.target.value })} />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Email</label>
-                  <input type="email" className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
-                    placeholder="Email address" value={regForm.email} onChange={e => setRegForm({ ...regForm, email: e.target.value })} />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Password</label>
-                  <input type="password" className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
-                    placeholder="Choose a password" value={regForm.password} onChange={e => setRegForm({ ...regForm, password: e.target.value })} />
-                </div>
-                {regError && <p className="text-red-500 text-xs">{regError}</p>}
-                <button onClick={handleRegister} className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition">Register</button>
-                <button onClick={() => { setShowReg(false); setRegError(""); }} className="w-full text-gray-500 py-2 text-sm hover:text-gray-700 transition">← Back</button>
-              </div>
-            </>
-          )}
+        <div style="margin-bottom:16px">
+          <label style="display:block;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Password</label>
+          <input id="lp" type="password" value="${state.loginPassword}" placeholder="Password" style="width:100%;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;font-size:13px;background:#f9fafb;box-sizing:border-box;outline:none"/>
         </div>
+        ${state.loginErr ? `<p style="color:#ef4444;font-size:12px;margin-bottom:12px">${state.loginErr}</p>` : ""}
+        <button onclick="doLogin()" style="width:100%;background:#1f2937;color:#fff;border:none;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer">Sign In</button>
+        <p style="text-align:center;font-size:12px;color:#9ca3af;margin-top:16px">New client? <a href="#" onclick="goRegister()" style="color:#1f2937;font-weight:600;text-decoration:none">Create account</a></p>
       </div>
     </div>
-  );
+  </div>`;
+}
 
-  // ── CLIENT ──
-  if (screen === "client") {
-    const myDocs = docs.filter(d => d.clientId === currentUser.id);
-    const myCL = getClientChecklist(currentUser.id);
-    const pendingCount = myCL.filter(r => r.status === "Pending").length;
-    return (
-      <div className="min-h-screen bg-gray-50">
-        {toast && <div className="fixed top-5 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm px-5 py-2 rounded-full shadow z-50">{toast}</div>}
-        <header className="bg-white border-b border-gray-100 px-6 py-4 flex justify-between items-center">
-          <div>
-            <p className="text-xs text-gray-400 uppercase tracking-widest">Document Portal</p>
-            <h1 className="text-base font-semibold text-gray-800">{FIRM}</h1>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-500">{currentUser.name}</span>
-            <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-700">Sign out</button>
-          </div>
-        </header>
-        {pendingCount > 0 && (
-          <div className="bg-amber-50 border-b border-amber-100 px-6 py-3 flex items-center gap-2">
-            <span className="text-amber-600 text-sm">⚠️</span>
-            <p className="text-amber-700 text-sm">You have <strong>{pendingCount}</strong> pending document{pendingCount > 1 ? "s" : ""} required. Please upload them at the earliest.</p>
-          </div>
-        )}
-        <div className="max-w-2xl mx-auto p-6 space-y-6">
-          <div className="bg-white rounded-xl border border-gray-100 p-6">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">Document Checklist</p>
-            <div className="space-y-2">
-              {myCL.map((r, i) => (
-                <div key={i} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${r.status !== "Pending" ? "bg-green-400" : "bg-amber-400"}`}></span>
-                    <span className="text-sm text-gray-700">{r.item}</span>
-                  </div>
-                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusColors[r.status] || "bg-gray-50 text-gray-500"}`}>{r.status}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-100 p-6">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">Upload Documents</p>
-            <label className="flex flex-col items-center justify-center border border-dashed border-gray-200 rounded-xl p-8 cursor-pointer hover:bg-gray-50 transition">
-              <span className="text-2xl mb-2">↑</span>
-              <span className="text-sm text-gray-600 font-medium">Click to upload</span>
-              <span className="text-xs text-gray-400 mt-1">PDF, Images, Word, Excel</span>
-              <input type="file" multiple className="hidden" onChange={handleUpload} />
-            </label>
-            {uploading && <p className="text-center text-gray-400 text-xs mt-3">Uploading...</p>}
-          </div>
-          <div className="bg-white rounded-xl border border-gray-100 p-6">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-4">Uploaded Files ({myDocs.length})</p>
-            {myDocs.length === 0
-              ? <p className="text-gray-300 text-sm text-center py-6">No files uploaded yet.</p>
-              : <div className="divide-y divide-gray-50">
-                {myDocs.map(doc => (
-                  <div key={doc.id} className="flex items-center justify-between py-3">
-                    <div className="flex items-center gap-3">
-                      <span>{getFileIcon(doc.type)}</span>
-                      <div>
-                        <p className="text-sm text-gray-700 truncate max-w-xs">{doc.name}</p>
-                        <p className="text-xs text-gray-400">{formatSize(doc.size)} · {doc.uploadedAt}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusColors[doc.status]}`}>{doc.status}</span>
-                      <button onClick={() => downloadBase64(doc.data, doc.name)} className="text-xs text-gray-400 hover:text-gray-700">↓</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            }
-          </div>
-        </div>
+// ── REGISTER WIZARD ──
+function stepBar(current, total) {
+  let html = `<div style="display:flex;align-items:center;gap:4px;margin-bottom:24px">`;
+  for(let i=1;i<=total;i++) {
+    const done = i < current, active = i === current;
+    html += `<div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;${done?"background:#1f2937;color:#fff":active?"background:#1f2937;color:#fff;box-shadow:0 0 0 4px #e5e7eb":"background:#f3f4f6;color:#9ca3af"}">${done?"✓":i}</div>`;
+    if(i<total) html += `<div style="flex:1;height:2px;background:${i<current?"#1f2937":"#f3f4f6"}"></div>`;
+  }
+  return html + `</div>`;
+}
+
+function renderRegister() {
+  const s = state.regStep;
+  const d = state.regData;
+  const stepTitles = ["Personal Details","Entity Type","Document Checklist","Upload Documents","Confirmation"];
+  let body = "";
+
+  if(s===1) body = `
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div><label style="display:block;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Full Name</label>
+        <input id="rn" value="${d.name}" placeholder="Your full name" style="width:100%;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;font-size:13px;background:#f9fafb;box-sizing:border-box;outline:none"/></div>
+      <div><label style="display:block;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Email</label>
+        <input id="re" type="email" value="${d.email}" placeholder="Email address" style="width:100%;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;font-size:13px;background:#f9fafb;box-sizing:border-box;outline:none"/></div>
+      <div><label style="display:block;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Password</label>
+        <input id="rp" type="password" value="${d.password}" placeholder="Choose a password" style="width:100%;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;font-size:13px;background:#f9fafb;box-sizing:border-box;outline:none"/></div>
+      ${state.regErr?`<p style="color:#ef4444;font-size:12px">${state.regErr}</p>`:""}
+      <button onclick="regNext1()" style="width:100%;background:#1f2937;color:#fff;border:none;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;margin-top:4px">Continue →</button>
+      <button onclick="goLogin()" style="width:100%;background:none;border:none;color:#9ca3af;font-size:13px;cursor:pointer;padding:6px">← Back to Sign In</button>
+    </div>`;
+
+  if(s===2) body = `
+    <div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+        ${ENTITIES.map(e=>`<button onclick="selectEntity('${e}')" style="padding:12px;border-radius:10px;border:${d.entity===e?"2px solid #1f2937":"1px solid #e5e7eb"};background:${d.entity===e?"#1f2937":"#fff"};color:${d.entity===e?"#fff":"#374151"};font-size:12px;font-weight:600;cursor:pointer;text-align:left">${e}</button>`).join("")}
       </div>
-    );
+      ${state.regErr?`<p style="color:#ef4444;font-size:12px;margin-bottom:12px">${state.regErr}</p>`:""}
+      <button onclick="regNext2()" style="width:100%;background:#1f2937;color:#fff;border:none;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer">Continue →</button>
+      <button onclick="regBack(1)" style="width:100%;background:none;border:none;color:#9ca3af;font-size:13px;cursor:pointer;padding:8px">← Back</button>
+    </div>`;
+
+  if(s===3) {
+    const docs = ENTITY_DOCS[d.entity]||[];
+    body = `
+    <div>
+      <p style="font-size:12px;color:#9ca3af;margin-bottom:14px">Documents required for <strong style="color:#374151">${d.entity}</strong>:</p>
+      <div style="max-height:260px;overflow-y:auto;margin-bottom:16px">
+        ${docs.map(doc=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f9fafb">
+          <span style="width:8px;height:8px;border-radius:50%;background:#f59e0b;flex-shrink:0"></span>
+          <span style="font-size:13px;color:#374151">${doc}</span>
+        </div>`).join("")}
+      </div>
+      <button onclick="regNext3()" style="width:100%;background:#1f2937;color:#fff;border:none;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer">Continue →</button>
+      <button onclick="regBack(2)" style="width:100%;background:none;border:none;color:#9ca3af;font-size:13px;cursor:pointer;padding:8px">← Back</button>
+    </div>`;
   }
 
-  // ── ADMIN ──
-  const viewDocs = activeClient
-    ? docs.filter(d => d.clientId === activeClient.id)
-    : statusFilter === "all" ? docs : docs.filter(d => d.status === statusFilter);
-  const activeCL = activeClient ? getClientChecklist(activeClient.id) : [];
-  const activeReminders = activeClient ? (reminders[activeClient.id] || []) : [];
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex">
-      {toast && <div className="fixed top-5 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm px-5 py-2 rounded-full shadow z-50">{toast}</div>}
-      {showReminderModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-            <h3 className="text-sm font-semibold text-gray-800 mb-1">Send Reminder</h3>
-            <p className="text-xs text-gray-400 mb-4">To: {reminderTarget?.email}</p>
-            <textarea rows={10} className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-700 focus:outline-none focus:border-gray-400 bg-gray-50 resize-none"
-              value={reminderMsg} onChange={e => setReminderMsg(e.target.value)} />
-            <p className="text-xs text-gray-400 mt-2 mb-4">This reminder will be logged and copied to clipboard.</p>
-            <div className="flex gap-2">
-              <button onClick={sendReminder} className="flex-1 bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-700 transition">Log & Copy</button>
-              <button onClick={() => { navigator.clipboard.writeText(reminderMsg); notify("Copied!"); }} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-lg text-sm hover:bg-gray-50 transition">Copy Only</button>
-              <button onClick={() => setShowReminderModal(false)} className="px-4 border border-gray-200 text-gray-400 rounded-lg text-sm hover:bg-gray-50 transition">Cancel</button>
+  if(s===4) {
+    const docs = ENTITY_DOCS[d.entity]||[];
+    const uploaded = docs.filter(doc=>(d.uploads[doc]||[]).length>0).length;
+    const pct = docs.length ? Math.round((uploaded/docs.length)*100) : 0;
+    body = `
+    <div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:#9ca3af;margin-bottom:6px">
+        <span>${uploaded} of ${docs.length} uploaded</span><span>${docs.length-uploaded} remaining</span>
+      </div>
+      <div style="background:#f3f4f6;border-radius:999px;height:4px;margin-bottom:16px">
+        <div style="background:#1f2937;height:4px;border-radius:999px;width:${pct}%;transition:width 0.3s"></div>
+      </div>
+      <div style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+        ${docs.map((doc,i)=>{
+          const files = d.uploads[doc]||[];
+          return `<div style="border:1px solid ${files.length?"#bbf7d0":"#e5e7eb"};border-radius:10px;padding:10px;background:${files.length?"#f0fdf4":"#fff"}">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:${files.length?'6px':'0'}">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="width:7px;height:7px;border-radius:50%;background:${files.length?"#4ade80":"#f59e0b"};flex-shrink:0"></span>
+                <span style="font-size:12px;font-weight:600;color:#374151">${doc}</span>
+              </div>
+              <label style="font-size:11px;color:#6366f1;cursor:pointer;font-weight:600">
+                + Upload <input type="file" multiple onchange="uploadForDoc('${doc.replace(/'/g,"\\'")}',this)" style="display:none"/>
+              </label>
             </div>
+            ${files.map(f=>`<div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:4px 8px;margin-top:4px">
+              <span style="font-size:11px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px">${fIcon(f.type)} ${f.name}</span>
+              <button onclick="removeRegFile('${doc.replace(/'/g,"\\'")}','${f.id}')" style="background:none;border:none;color:#d1d5db;cursor:pointer;font-size:13px;padding:0 4px">✕</button>
+            </div>`).join("")}
+          </div>`;
+        }).join("")}
+      </div>
+      <button onclick="regNext4()" style="width:100%;background:#1f2937;color:#fff;border:none;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer">Continue →</button>
+      <button onclick="regBack(3)" style="width:100%;background:none;border:none;color:#9ca3af;font-size:13px;cursor:pointer;padding:8px">← Back</button>
+    </div>`;
+  }
+
+  if(s===5) {
+    const docs = ENTITY_DOCS[d.entity]||[];
+    body = `
+    <div>
+      <div style="background:#f9fafb;border-radius:10px;padding:14px;margin-bottom:14px;font-size:13px;display:flex;flex-direction:column;gap:6px">
+        <div><span style="color:#9ca3af">Name: </span><strong style="color:#111827">${d.name}</strong></div>
+        <div><span style="color:#9ca3af">Email: </span><span style="color:#111827">${d.email}</span></div>
+        <div><span style="color:#9ca3af">Entity: </span><span style="color:#6366f1;font-weight:600">${d.entity}</span></div>
+      </div>
+      <div style="max-height:220px;overflow-y:auto;margin-bottom:16px">
+        ${docs.map(doc=>{
+          const uploaded = (d.uploads[doc]||[]).length>0;
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f9fafb">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="width:7px;height:7px;border-radius:50%;background:${uploaded?"#4ade80":"#f59e0b"};flex-shrink:0"></span>
+              <span style="font-size:12px;color:#374151">${doc}</span>
+            </div>
+            ${statusBadge(uploaded?"Received":"Pending")}
+          </div>`;
+        }).join("")}
+      </div>
+      <button onclick="finishRegister()" style="width:100%;background:#1f2937;color:#fff;border:none;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer">Complete Registration ✓</button>
+      <button onclick="regBack(4)" style="width:100%;background:none;border:none;color:#9ca3af;font-size:13px;cursor:pointer;padding:8px">← Back</button>
+    </div>`;
+  }
+
+  return `${toast()}
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px">
+    <div style="width:100%;max-width:460px">
+      <div style="text-align:center;margin-bottom:20px">
+        <p style="font-size:11px;letter-spacing:3px;color:#9ca3af;text-transform:uppercase;margin-bottom:4px">Document Portal</p>
+        <h1 style="font-size:20px;font-weight:600;color:#111827">${FIRM}</h1>
+      </div>
+      <div style="background:#fff;border-radius:16px;border:1px solid #f3f4f6;padding:28px;box-shadow:0 1px 4px rgba(0,0,0,0.05)" class="fade">
+        ${stepBar(s,5)}
+        <p style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Step ${s} of 5</p>
+        <h2 style="font-size:15px;font-weight:600;color:#111827;margin-bottom:18px">${stepTitles[s-1]}</h2>
+        ${body}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── CLIENT ──
+function renderClient() {
+  const u = state.user;
+  const myDocs = state.docs.filter(d=>d.clientId===u.id);
+  const myCL = getCL(u.id);
+  const pendingCount = myCL.filter(r=>r.status==="Pending").length;
+
+  return `${toast()}
+  <div style="min-height:100vh;background:#f9fafb">
+    <header style="background:#fff;border-bottom:1px solid #f3f4f6;padding:14px 24px;display:flex;justify-content:space-between;align-items:center">
+      <div><p style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:2px">Document Portal</p><h1 style="font-size:15px;font-weight:600;color:#111827">${FIRM}</h1></div>
+      <div style="text-align:right"><p style="font-size:13px;color:#374151;font-weight:500">${u.name}</p><p style="font-size:11px;color:#9ca3af">${u.entity||""}</p></div>
+      <button onclick="doLogout()" style="font-size:12px;color:#9ca3af;background:none;border:none;cursor:pointer">Sign out</button>
+    </header>
+    ${pendingCount>0?`<div style="background:#fffbeb;border-bottom:1px solid #fef3c7;padding:10px 24px;display:flex;align-items:center;gap:8px"><span>⚠️</span><p style="font-size:13px;color:#92400e">You have <strong>${pendingCount}</strong> pending document${pendingCount>1?"s":""} required. Please upload them below.</p></div>`:""}
+    <div style="max-width:640px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:20px">
+      <!-- Checklist -->
+      <div style="background:#fff;border-radius:12px;border:1px solid #f3f4f6;padding:20px">
+        <p style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:14px">Document Checklist${u.entity?" — "+u.entity:""}</p>
+        ${myCL.map(r=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f9fafb">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="width:7px;height:7px;border-radius:50%;background:${r.status!=="Pending"?"#4ade80":"#f59e0b"};flex-shrink:0"></span>
+            <span style="font-size:13px;color:#374151">${r.item}</span>
           </div>
-        </div>
-      )}
-      <aside className="w-56 bg-white border-r border-gray-100 flex flex-col min-h-screen">
-        <div className="p-5 border-b border-gray-100">
-          <p className="text-xs text-gray-400 uppercase tracking-widest mb-0.5">Admin</p>
-          <h1 className="text-sm font-semibold text-gray-800 leading-tight">{FIRM}</h1>
-        </div>
-        <nav className="p-3 flex-1 overflow-y-auto">
-          <button onClick={() => { setActiveClient(null); setAdminTab("docs"); setStatusFilter("all"); }}
-            className={`w-full text-left px-3 py-2 rounded-lg text-sm mb-1 transition ${!activeClient && adminTab === "docs" ? "bg-gray-100 text-gray-800 font-medium" : "text-gray-500 hover:bg-gray-50"}`}>
-            All Documents
-          </button>
-          <button onClick={() => { setActiveClient(null); setAdminTab("checklist"); }}
-            className={`w-full text-left px-3 py-2 rounded-lg text-sm mb-1 transition ${adminTab === "checklist" && !activeClient ? "bg-gray-100 text-gray-800 font-medium" : "text-gray-500 hover:bg-gray-50"}`}>
-            Document Checklist
-          </button>
-          <p className="text-xs text-gray-300 uppercase tracking-widest px-3 mt-4 mb-2">Clients</p>
-          {clients.length === 0 && <p className="text-xs text-gray-300 px-3">No clients yet</p>}
-          {clients.map(c => {
-            const cl = getClientChecklist(c.id);
-            const pending = cl.filter(r => r.status === "Pending").length;
-            return (
-              <button key={c.id} onClick={() => { setActiveClient(c); setAdminTab("docs"); }}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex justify-between items-center mb-0.5 ${activeClient?.id === c.id ? "bg-gray-100 text-gray-800 font-medium" : "text-gray-500 hover:bg-gray-50"}`}>
-                <span className="truncate">{c.name}</span>
-                {pending > 0 && <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">{pending}</span>}
-              </button>
-            );
-          })}
-        </nav>
-        <div className="p-4 border-t border-gray-100">
-          <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600">Sign out</button>
-        </div>
-      </aside>
-      <main className="flex-1 p-8 overflow-y-auto">
-        {!activeClient && adminTab === "checklist" && (
-          <>
-            <h2 className="text-lg font-semibold text-gray-800 mb-6">Document Checklist</h2>
-            <div className="bg-white rounded-xl border border-gray-100 p-6 max-w-xl">
-              <p className="text-xs text-gray-400 mb-4">This checklist applies to all clients.</p>
-              <div className="space-y-2 mb-6">
-                {checklist.map((item, i) => (
-                  <div key={i} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                    <span className="text-sm text-gray-700">{item}</span>
-                    <button onClick={() => removeChecklistItem(i)} className="text-xs text-gray-300 hover:text-red-400">Remove</button>
-                  </div>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <input className="flex-1 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-gray-400 bg-gray-50"
-                  placeholder="Add new document..." value={newDocItem} onChange={e => setNewDocItem(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && addChecklistItem()} />
-                <button onClick={addChecklistItem} className="bg-gray-800 text-white px-4 py-2 rounded-lg text-sm hover:bg-gray-700 transition">Add</button>
-              </div>
-            </div>
-          </>
-        )}
-        {!activeClient && adminTab === "docs" && (
-          <>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-semibold text-gray-800">All Documents</h2>
-              <div className="flex gap-1">
-                {["all", ...statusOrder].map(s => (
-                  <button key={s} onClick={() => setStatusFilter(s)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${statusFilter === s ? "bg-gray-800 text-white" : "text-gray-500 hover:bg-gray-100"}`}>
-                    {s === "all" ? "All" : s}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="grid grid-cols-4 gap-4 mb-6">
-              <div className="bg-white rounded-xl border border-gray-100 p-4 text-center">
-                <p className="text-xl font-semibold text-gray-700">{clients.length}</p>
-                <p className="text-xs text-gray-400 mt-0.5">Clients</p>
-              </div>
-              {statusOrder.map(s => (
-                <div key={s} className="bg-white rounded-xl border border-gray-100 p-4 text-center">
-                  <p className="text-xl font-semibold text-gray-700">{docs.filter(d => d.status === s).length}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">{s}</p>
-                </div>
-              ))}
-            </div>
-            <DocsTable docs={viewDocs} showClient onStatus={updateDocStatus} onDelete={deleteDoc} onDownload={downloadBase64} getFileIcon={getFileIcon} formatSize={formatSize} statusColors={statusColors} statusOrder={statusOrder} />
-          </>
-        )}
-        {activeClient && (
-          <>
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <button onClick={() => setActiveClient(null)} className="text-xs text-gray-400 hover:text-gray-600 mb-1 block">← All</button>
-                <h2 className="text-lg font-semibold text-gray-800">{activeClient.name}</h2>
-                <p className="text-xs text-gray-400">{activeClient.email}</p>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => openReminderModal(activeClient)} className="text-sm border border-amber-300 text-amber-700 px-4 py-2 rounded-lg hover:bg-amber-50 transition">Send Reminder</button>
-                <button onClick={() => exportClientDocs(activeClient.id)} className="text-sm border border-gray-200 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-50 transition">Export All</button>
-              </div>
-            </div>
-            <div className="flex gap-1 mb-6">
-              {["docs", "checklist", "reminders"].map(t => (
-                <button key={t} onClick={() => setAdminTab(t)}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-medium capitalize transition ${adminTab === t ? "bg-gray-800 text-white" : "text-gray-500 hover:bg-gray-100"}`}>
-                  {t}
-                </button>
-              ))}
-            </div>
-            {adminTab === "docs" && (
-              <>
-                <div className="grid grid-cols-3 gap-4 mb-6">
-                  {statusOrder.map(s => (
-                    <div key={s} className="bg-white rounded-xl border border-gray-100 p-4 text-center">
-                      <p className="text-xl font-semibold text-gray-700">{docs.filter(d => d.clientId === activeClient.id && d.status === s).length}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{s}</p>
-                    </div>
-                  ))}
-                </div>
-                <DocsTable docs={viewDocs} onStatus={updateDocStatus} onDelete={deleteDoc} onDownload={downloadBase64} getFileIcon={getFileIcon} formatSize={formatSize} statusColors={statusColors} statusOrder={statusOrder} />
-              </>
-            )}
-            {adminTab === "checklist" && (
-              <div className="bg-white rounded-xl border border-gray-100 p-6">
-                <p className="text-xs text-gray-400 mb-4">Track required documents for {activeClient.name}.</p>
-                <div className="divide-y divide-gray-50">
-                  {activeCL.map((r, i) => (
-                    <div key={i} className="flex items-center justify-between py-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${r.status !== "Pending" ? "bg-green-400" : "bg-amber-400"}`}></span>
-                        <span className="text-sm text-gray-700">{r.item}</span>
-                      </div>
-                      <select value={r.status} onChange={e => updateClientChecklistStatus(activeClient.id, i, e.target.value)}
-                        className={`text-xs px-2.5 py-1 rounded-full font-medium border-0 cursor-pointer ${statusColors[r.status]}`}>
-                        {statusOrder.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 pt-4 border-t border-gray-50 flex justify-between text-xs text-gray-400">
-                  <span>{activeCL.filter(r => r.status !== "Pending").length} / {activeCL.length} received</span>
-                  <span>{activeCL.filter(r => r.status === "Pending").length} pending</span>
-                </div>
-              </div>
-            )}
-            {adminTab === "reminders" && (
-              <div className="bg-white rounded-xl border border-gray-100 p-6">
-                <p className="text-xs text-gray-400 mb-4">Reminder history for {activeClient.name}</p>
-                {activeReminders.length === 0
-                  ? <p className="text-gray-300 text-sm text-center py-8">No reminders sent yet.</p>
-                  : <div className="space-y-4">
-                    {[...activeReminders].reverse().map(r => (
-                      <div key={r.id} className="border border-gray-100 rounded-xl p-4">
-                        <div className="flex justify-between mb-2">
-                          <span className="text-xs text-gray-400">To: {r.email}</span>
-                          <span className="text-xs text-gray-400">{r.sentAt}</span>
-                        </div>
-                        <pre className="text-xs text-gray-600 whitespace-pre-wrap font-sans">{r.message}</pre>
-                      </div>
-                    ))}
-                  </div>
-                }
-              </div>
-            )}
-          </>
-        )}
-      </main>
+          ${statusBadge(r.status)}
+        </div>`).join("")}
+      </div>
+      <!-- Upload -->
+      <div style="background:#fff;border-radius:12px;border:1px solid #f3f4f6;padding:20px">
+        <p style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:14px">Upload Additional Documents</p>
+        <label style="display:flex;flex-direction:column;align-items:center;justify-content:center;border:1.5px dashed #e5e7eb;border-radius:10px;padding:28px;cursor:pointer">
+          <span style="font-size:24px;margin-bottom:6px">↑</span>
+          <span style="font-size:13px;font-weight:500;color:#374151">Click to upload</span>
+          <span style="font-size:12px;color:#9ca3af;margin-top:2px">PDF, Images, Word, Excel</span>
+          <input type="file" multiple onchange="clientUpload(this)" style="display:none"/>
+        </label>
+      </div>
+      <!-- Files -->
+      ${myDocs.length>0?`<div style="background:#fff;border-radius:12px;border:1px solid #f3f4f6;padding:20px">
+        <p style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:14px">Uploaded Files (${myDocs.length})</p>
+        ${myDocs.map(d=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f9fafb">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:18px">${fIcon(d.type)}</span>
+            <div><p style="font-size:13px;color:#374151;font-weight:500;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.name}</p>
+            <p style="font-size:11px;color:#9ca3af">${d.docType?`<span style="color:#818cf8">${d.docType} · </span>`:""}${fmtSize(d.size)} · ${d.uploadedAt}</p></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">${statusBadge(d.status)}<button onclick="dlB64('${d.data}','${d.name.replace(/'/g,"\\'")}' )" style="font-size:12px;color:#9ca3af;background:none;border:none;cursor:pointer">↓</button></div>
+        </div>`).join("")}
+      </div>`:""}
     </div>
-  );
+  </div>`;
 }
 
-function DocsTable({ docs, showClient, onStatus, onDelete, onDownload, getFileIcon, formatSize, statusColors, statusOrder }) {
-  if (docs.length === 0) return <div className="bg-white rounded-xl border border-gray-100 p-12 text-center text-gray-300 text-sm">No documents found.</div>;
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-gray-50">
-            <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium uppercase tracking-wide">File</th>
-            {showClient && <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium uppercase tracking-wide">Client</th>}
-            <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium uppercase tracking-wide">Size</th>
-            <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium uppercase tracking-wide">Date</th>
-            <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium uppercase tracking-wide">Status</th>
-            <th className="px-5 py-3"></th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-50">
-          {docs.map(doc => (
-            <tr key={doc.id} className="hover:bg-gray-50 transition">
-              <td className="px-5 py-3"><div className="flex items-center gap-2"><span>{getFileIcon(doc.type)}</span><span className="text-gray-700 truncate max-w-xs">{doc.name}</span></div></td>
-              {showClient && <td className="px-5 py-3 text-gray-500">{doc.clientName}</td>}
-              <td className="px-5 py-3 text-gray-400">{formatSize(doc.size)}</td>
-              <td className="px-5 py-3 text-gray-400">{doc.uploadedAt}</td>
-              <td className="px-5 py-3">
-                <select value={doc.status} onChange={e => onStatus(doc.id, e.target.value)}
-                  className={`text-xs px-2.5 py-1 rounded-full font-medium border-0 cursor-pointer ${statusColors[doc.status]}`}>
-                  {statusOrder.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </td>
-              <td className="px-5 py-3">
-                <div className="flex gap-3 justify-end">
-                  <button onClick={() => onDownload(doc.data, doc.name)} className="text-xs text-gray-400 hover:text-gray-700">Download</button>
-                  <button onClick={() => onDelete(doc.id)} className="text-xs text-gray-300 hover:text-red-400">Delete</button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+// ── ADMIN ──
+function renderAdmin() {
+  const ac = state.activeClientId ? getClient(state.activeClientId) : null;
+  const tab = state.adminTab;
+
+  let mainContent = "";
+
+  if(!ac && tab==="docs") {
+    const viewDocs = state.statusFilter==="all" ? state.docs : state.docs.filter(d=>d.status===state.statusFilter);
+    mainContent = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <h2 style="font-size:16px;font-weight:600;color:#111827">All Documents</h2>
+        <div style="display:flex;gap:4px">
+          ${["all",...STATUS_LIST].map(s=>`<button onclick="setFilter('${s}')" style="padding:6px 12px;border-radius:8px;border:none;font-size:11px;font-weight:600;cursor:pointer;background:${state.statusFilter===s?"#1f2937":"#f3f4f6"};color:${state.statusFilter===s?"#fff":"#6b7280"}">${s==="all"?"All":s}</button>`).join("")}
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+        <div style="background:#fff;border-radius:10px;border:1px solid #f3f4f6;padding:16px;text-align:center"><p style="font-size:20px;font-weight:600;color:#374151">${state.clients.length}</p><p style="font-size:11px;color:#9ca3af;margin-top:2px">Clients</p></div>
+        ${STATUS_LIST.map(s=>`<div style="background:#fff;border-radius:10px;border:1px solid #f3f4f6;padding:16px;text-align:center"><p style="font-size:20px;font-weight:600;color:#374151">${state.docs.filter(d=>d.status===s).length}</p><p style="font-size:11px;color:#9ca3af;margin-top:2px">${s}</p></div>`).join("")}
+      </div>
+      ${renderDocsTable(viewDocs, true)}`;
+  }
+
+  if(ac) {
+    const cl = getCL(ac.id);
+    const acDocs = state.docs.filter(d=>d.clientId===ac.id);
+    const acRem = state.reminders[ac.id]||[];
+    mainContent = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">
+        <div>
+          <button onclick="setActiveClient(null)" style="font-size:12px;color:#9ca3af;background:none;border:none;cursor:pointer;padding:0;margin-bottom:6px;display:block">← All</button>
+          <h2 style="font-size:16px;font-weight:600;color:#111827">${ac.name}</h2>
+          <p style="font-size:12px;color:#9ca3af">${ac.email} · <span style="color:#818cf8">${ac.entity||""}</span></p>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button onclick="openReminder('${ac.id}')" style="font-size:12px;border:1px solid #fcd34d;color:#92400e;background:#fffbeb;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600">Send Reminder</button>
+          <button onclick="exportAll('${ac.id}')" style="font-size:12px;border:1px solid #e5e7eb;color:#374151;background:#fff;border-radius:8px;padding:8px 14px;cursor:pointer">Export All</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;margin-bottom:20px">
+        ${["docs","checklist","reminders"].map(t=>`<button onclick="setAdminTab('${t}')" style="padding:6px 14px;border-radius:8px;border:none;font-size:11px;font-weight:600;cursor:pointer;background:${tab===t?"#1f2937":"#f3f4f6"};color:${tab===t?"#fff":"#6b7280"};text-transform:capitalize">${t}</button>`).join("")}
+      </div>
+      ${tab==="docs"?`
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
+          ${STATUS_LIST.map(s=>`<div style="background:#fff;border-radius:10px;border:1px solid #f3f4f6;padding:16px;text-align:center"><p style="font-size:20px;font-weight:600;color:#374151">${acDocs.filter(d=>d.status===s).length}</p><p style="font-size:11px;color:#9ca3af;margin-top:2px">${s}</p></div>`).join("")}
+        </div>
+        ${renderDocsTable(acDocs, false)}`:""}
+      ${tab==="checklist"?`
+        <div style="background:#fff;border-radius:12px;border:1px solid #f3f4f6;padding:20px">
+          <p style="font-size:12px;color:#9ca3af;margin-bottom:14px">Required documents for <strong style="color:#374151">${ac.entity}</strong></p>
+          ${cl.map((r,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f9fafb">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:7px;height:7px;border-radius:50%;background:${r.status!=="Pending"?"#4ade80":"#f59e0b"};flex-shrink:0"></span>
+              <span style="font-size:13px;color:#374151">${r.item}</span>
+            </div>
+            <select onchange="updateCLStatus('${ac.id}',${i},this.value)" style="font-size:11px;padding:3px 10px;border-radius:999px;border:none;cursor:pointer;font-weight:600;${SC[r.status]||''}">
+              ${STATUS_LIST.map(s=>`<option value="${s}" ${r.status===s?"selected":""}>${s}</option>`).join("")}
+            </select>
+          </div>`).join("")}
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#9ca3af;margin-top:14px;padding-top:10px;border-top:1px solid #f9fafb">
+            <span>${cl.filter(r=>r.status!=="Pending").length} / ${cl.length} received</span>
+            <span>${cl.filter(r=>r.status==="Pending").length} pending</span>
+          </div>
+        </div>`:""}
+      ${tab==="reminders"?`
+        <div style="background:#fff;border-radius:12px;border:1px solid #f3f4f6;padding:20px">
+          ${acRem.length===0?`<p style="text-align:center;color:#d1d5db;font-size:13px;padding:32px 0">No reminders sent yet.</p>`
+            :[...acRem].reverse().map(r=>`<div style="border:1px solid #f3f4f6;border-radius:10px;padding:14px;margin-bottom:12px">
+              <div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="font-size:11px;color:#9ca3af">To: ${r.email}</span><span style="font-size:11px;color:#9ca3af">${r.sentAt}</span></div>
+              <pre style="font-size:12px;color:#374151;white-space:pre-wrap;font-family:inherit;margin:0">${r.message}</pre>
+            </div>`).join("")}
+        </div>`:""}`;
+  }
+
+  return `${toast()}
+  ${state.reminderModal?renderReminderModal():""}
+  <div style="min-height:100vh;display:flex">
+    <aside style="width:220px;background:#fff;border-right:1px solid #f3f4f6;display:flex;flex-direction:column;min-height:100vh;flex-shrink:0">
+      <div style="padding:20px;border-bottom:1px solid #f3f4f6">
+        <p style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:2px;margin-bottom:2px">Admin</p>
+        <h1 style="font-size:13px;font-weight:600;color:#111827;line-height:1.3">${FIRM}</h1>
+      </div>
+      <nav style="padding:12px;flex:1;overflow-y:auto">
+        <button onclick="setActiveClient(null)" style="width:100%;text-align:left;padding:8px 12px;border-radius:8px;border:none;font-size:13px;cursor:pointer;margin-bottom:4px;background:${!ac&&tab==="docs"?"#f3f4f6":"transparent"};color:${!ac&&tab==="docs"?"#111827":"#6b7280"};font-weight:${!ac&&tab==="docs"?"600":"400"}">All Documents</button>
+        <p style="font-size:10px;color:#d1d5db;text-transform:uppercase;letter-spacing:2px;padding:0 12px;margin:14px 0 6px">Clients</p>
+        ${state.clients.length===0?`<p style="font-size:12px;color:#d1d5db;padding:0 12px">No clients yet</p>`:""}
+        ${state.clients.map(c=>{
+          const pending = getCL(c.id).filter(r=>r.status==="Pending").length;
+          return `<button onclick="setActiveClient('${c.id}')" style="width:100%;text-align:left;padding:8px 12px;border-radius:8px;border:none;font-size:13px;cursor:pointer;margin-bottom:2px;background:${state.activeClientId===c.id?"#f3f4f6":"transparent"};color:${state.activeClientId===c.id?"#111827":"#6b7280"};font-weight:${state.activeClientId===c.id?"600":"400"};display:flex;justify-content:space-between;align-items:center">
+            <div style="text-align:left;overflow:hidden"><p style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name}</p><p style="font-size:10px;color:#d1d5db">${c.entity||""}</p></div>
+            ${pending>0?`<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:999px;margin-left:4px;flex-shrink:0">${pending}</span>`:""}
+          </button>`;
+        }).join("")}
+      </nav>
+      <div style="padding:16px;border-top:1px solid #f3f4f6">
+        <button onclick="doLogout()" style="font-size:12px;color:#9ca3af;background:none;border:none;cursor:pointer">Sign out</button>
+      </div>
+    </aside>
+    <main style="flex:1;padding:32px;overflow-y:auto">${mainContent}</main>
+  </div>`;
 }
+
+function renderReminderModal() {
+  const t = state.reminderTarget;
+  return `<div style="position:fixed;inset:0;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;z-index:9998;padding:16px">
+    <div style="background:#fff;border-radius:16px;width:100%;max-width:440px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
+      <h3 style="font-size:14px;font-weight:600;color:#111827;margin-bottom:4px">Send Reminder</h3>
+      <p style="font-size:12px;color:#9ca3af;margin-bottom:12px">To: ${t?.email}</p>
+      <textarea id="rmsg" rows="10" style="width:100%;border:1px solid #e5e7eb;border-radius:8px;padding:12px;font-size:12px;color:#374151;background:#f9fafb;resize:none;box-sizing:border-box;font-family:inherit;outline:none">${state.reminderMsg}</textarea>
+      <p style="font-size:11px;color:#9ca3af;margin:8px 0 14px">Reminder will be logged and copied to clipboard.</p>
+      <div style="display:flex;gap:8px">
+        <button onclick="sendReminder()" style="flex:1;background:#1f2937;color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer">Log & Copy</button>
+        <button onclick="copyReminder()" style="flex:1;border:1px solid #e5e7eb;color:#374151;background:#fff;border-radius:8px;padding:10px;font-size:13px;cursor:pointer">Copy Only</button>
+        <button onclick="closeReminder()" style="padding:10px 14px;border:1px solid #e5e7eb;color:#9ca3af;background:#fff;border-radius:8px;font-size:13px;cursor:pointer">Cancel</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderDocsTable(docs, showClient) {
+  if(!docs.length) return `<div style="background:#fff;border-radius:12px;border:1px solid #f3f4f6;padding:48px;text-align:center;color:#d1d5db;font-size:13px">No documents found.</div>`;
+  return `<div style="background:#fff;border-radius:12px;border:1px solid #f3f4f6;overflow:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:1px solid #f9fafb">
+        <th style="text-align:left;padding:12px 16px;font-size:11px;color:#9ca3af;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">File</th>
+        ${showClient?`<th style="text-align:left;padding:12px 16px;font-size:11px;color:#9ca3af;font-weight:600;text-transform:uppercase">Client</th>`:""}
+        <th style="text-align:left;padding:12px 16px;font-size:11px;color:#9ca3af;font-weight:600;text-transform:uppercase">Doc Type</th>
+        <th style="text-align:left;padding:12px 16px;font-size:11px;color:#9ca3af;font-weight:600;text-transform:uppercase">Size</th>
+        <th style="text-align:left;padding:12px 16px;font-size:11px;color:#9ca3af;font-weight:600;text-transform:uppercase">Date</th>
+        <th style="text-align:left;padding:12px 16px;font-size:11px;color:#9ca3af;font-weight:600;text-transform:uppercase">Status</th>
+        <th style="padding:12px 16px"></th>
+      </tr></thead>
+      <tbody>
+        ${docs.map(d=>`<tr style="border-bottom:1px solid #f9fafb">
+          <td style="padding:12px 16px"><div style="display:flex;align-items:center;gap:8px"><span>${fIcon(d.type)}</span><span style="color:#374151;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.name}</span></div></td>
+          ${showClient?`<td style="padding:12px 16px;color:#6b7280">${d.clientName}</td>`:""}
+          <td style="padding:12px 16px;color:#9ca3af;font-size:11px">${d.docType||"—"}</td>
+          <td style="padding:12px 16px;color:#9ca3af">${fmtSize(d.size)}</td>
+          <td style="padding:12px 16px;color:#9ca3af">${d.uploadedAt}</td>
+          <td style="padding:12px 16px">
+            <select onchange="updateDocStatus('${d.id}',this.value)" style="font-size:11px;padding:3px 10px;border-radius:999px;border:none;cursor:pointer;font-weight:600;${SC[d.status]||''}">
+              ${STATUS_LIST.map(s=>`<option value="${s}" ${d.status===s?"selected":""}>${s}</option>`).join("")}
+            </select>
+          </td>
+          <td style="padding:12px 16px;text-align:right">
+            <button onclick="dlB64('${d.data}','${d.name.replace(/'/g,"\\'")}' )" style="font-size:12px;color:#9ca3af;background:none;border:none;cursor:pointer;margin-right:8px">Download</button>
+            <button onclick="deleteDoc('${d.id}')" style="font-size:12px;color:#d1d5db;background:none;border:none;cursor:pointer">Delete</button>
+          </td>
+        </tr>`).join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+// ── EVENT HANDLERS ──
+function bindEvents() {
+  const li = document.getElementById("li");
+  const lp = document.getElementById("lp");
+  if(li) li.oninput = e => state.loginIdentity = e.target.value;
+  if(lp) { lp.oninput = e => state.loginPassword = e.target.value; lp.onkeydown = e => { if(e.key==="Enter") doLogin(); }; }
+}
+
+function doLogin() {
+  const id = state.loginIdentity.trim();
+  const pw = state.loginPassword;
+  if(id==="admin" && pw===ADMIN_PASS) { state.user={isAdmin:true,name:"Admin"}; state.screen="admin"; state.loginErr=""; render(); return; }
+  const c = state.clients.find(c=>(c.name.toLowerCase()===id.toLowerCase()||c.email.toLowerCase()===id.toLowerCase())&&c.password===pw);
+  if(c) { state.user=c; state.screen="client"; state.loginErr=""; render(); }
+  else { state.loginErr="Invalid name/email or password."; render(); }
+}
+
+function goRegister() { state.screen="register"; state.regStep=1; state.regData={name:"",email:"",password:"",entity:"",uploads:{}}; state.regErr=""; render(); }
+function goLogin() { state.screen="login"; render(); }
+
+function regNext1() {
+  const n = document.getElementById("rn")?.value.trim();
+  const e = document.getElementById("re")?.value.trim();
+  const p = document.getElementById("rp")?.value;
+  if(!n||!e||!p) { state.regErr="Please fill all fields."; render(); return; }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) { state.regErr="Enter a valid email."; render(); return; }
+  if(state.clients.find(c=>c.email.toLowerCase()===e.toLowerCase())) { state.regErr="Email already registered."; render(); return; }
+  state.regData.name=n; state.regData.email=e; state.regData.password=p; state.regErr=""; state.regStep=2; render();
+}
+
+function regNext2() {
+  if(!state.regData.entity) { state.regErr="Please select an entity type."; render(); return; }
+  state.regErr=""; state.regStep=3; render();
+}
+function regNext3() { state.regStep=4; render(); }
+function regNext4() { state.regStep=5; render(); }
+function regBack(s) { state.regStep=s; state.regErr=""; render(); }
+function selectEntity(e) { state.regData.entity=e; render(); }
+
+async function uploadForDoc(docName, input) {
+  const files = Array.from(input.files); if(!files.length) return;
+  for(const f of files) {
+    const data = await fileToBase64(f);
+    if(!state.regData.uploads[docName]) state.regData.uploads[docName]=[];
+    state.regData.uploads[docName].push({id:Date.now().toString()+Math.random(),name:f.name,type:f.type,size:f.size,data,uploadedAt:new Date().toLocaleDateString("en-IN")});
+  }
+  render();
+}
+
+function removeRegFile(docName, fileId) {
+  state.regData.uploads[docName]=(state.regData.uploads[docName]||[]).filter(f=>f.id!==fileId);
+  render();
+}
+
+function finishRegister() {
+  const d = state.regData;
+  const nc = {id:Date.now().toString(), name:d.name, email:d.email, password:d.password, entity:d.entity};
+  const newClients = [...state.clients, nc];
+  state.clients = newClients; store.set("lfs_clients", newClients);
+  const entityDocs = ENTITY_DOCS[d.entity]||[];
+  const clItems = entityDocs.map(item=>({item, status:(d.uploads[item]&&d.uploads[item].length>0)?"Received":"Pending", files:d.uploads[item]||[]}));
+  const newCCL = {...state.ccl, [nc.id]:clItems};
+  state.ccl = newCCL; store.set("lfs_ccl", newCCL);
+  // Save uploaded docs
+  const newDocs = [];
+  clItems.forEach(item=>{ (item.files||[]).forEach(f=>{ newDocs.push({id:f.id,clientId:nc.id,clientName:nc.name,docType:item.item,name:f.name,type:f.type,size:f.size,data:f.data,status:"Pending",uploadedAt:f.uploadedAt}); }); });
+  if(newDocs.length) { const updated=[...state.docs,...newDocs]; state.docs=updated; store.set("lfs_docs",updated); }
+  state.user=nc; state.screen="client"; notify("Registration complete! Welcome.");
+}
+
+function doLogout() { state.user=null; state.screen="login"; state.loginIdentity=""; state.loginPassword=""; state.activeClientId=null; state.adminTab="docs"; render(); }
+
+async function clientUpload(input) {
+  const files = Array.from(input.files); if(!files.length) return;
+  const newDocs=[];
+  for(const f of files) {
+    const data = await fileToBase64(f);
+    newDocs.push({id:Date.now().toString()+Math.random(),clientId:state.user.id,clientName:state.user.name,docType:"",name:f.name,type:f.type,size:f.size,data,status:"Pending",uploadedAt:new Date().toLocaleDateString("en-IN")});
+  }
+  const updated=[...state.docs,...newDocs]; state.docs=updated; store.set("lfs_docs",updated);
+  notify(`${newDocs.length} file(s) uploaded.`);
+}
+
+function updateDocStatus(id,status) { state.docs=state.docs.map(d=>d.id===id?{...d,status}:d); store.set("lfs_docs",state.docs); render(); }
+function deleteDoc(id) { state.docs=state.docs.filter(d=>d.id!==id); store.set("lfs_docs",state.docs); notify("Document removed."); }
+function exportAll(cid) { state.docs.filter(d=>d.clientId===cid).forEach(d=>dlB64(d.data,d.name)); }
+function setFilter(f) { state.statusFilter=f; render(); }
+function setActiveClient(id) { state.activeClientId=id; state.adminTab="docs"; render(); }
+function setAdminTab(t) { state.adminTab=t; render(); }
+
+function updateCLStatus(cid,idx,status) {
+  if(!state.ccl[cid]) return;
+  state.ccl[cid]=state.ccl[cid].map((r,i)=>i===idx?{...r,status}:r);
+  store.set("lfs_ccl",state.ccl); render();
+}
+
+function openReminder(cid) {
+  const client = getClient(cid);
+  const cl = getCL(cid);
+  const pending = cl.filter(r=>r.status==="Pending").map(r=>r.item);
+  const msg = pending.length>0
+    ?`Dear ${client.name},\n\nThis is a reminder from ${FIRM} regarding the following pending documents:\n\n${pending.map((p,i)=>`${i+1}. ${p}`).join("\n")}\n\nKindly submit at your earliest convenience.\n\nRegards,\n${FIRM}`
+    :`Dear ${client.name},\n\nAll documents have been received. Thank you.\n\nRegards,\n${FIRM}`;
+  state.reminderModal=true; state.reminderTarget=client; state.reminderMsg=msg; render();
+}
+
+function sendReminder() {
+  const msg = document.getElementById("rmsg")?.value || state.reminderMsg;
+  const t = state.reminderTarget;
+  const log={id:Date.now().toString(),clientId:t.id,clientName:t.name,email:t.email,message:msg,sentAt:new Date().toLocaleString("en-IN")};
+  const updated={...state.reminders,[t.id]:[...(state.reminders[t.id]||[]),log]};
+  state.reminders=updated; store.set("lfs_reminders",updated);
+  navigator.clipboard.writeText(msg).catch(()=>{});
+  state.reminderModal=false; notify(`Reminder logged for ${t.name}.`);
+}
+
+function copyReminder() { const msg=document.getElementById("rmsg")?.value||state.reminderMsg; navigator.clipboard.writeText(msg).catch(()=>{}); notify("Copied!"); }
+function closeReminder() { state.reminderModal=false; render(); }
+
+// Init
+render();
+</script>
+</body>
+</html>
